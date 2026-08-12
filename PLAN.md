@@ -94,7 +94,7 @@ One folder per song under `public/songs/<id>/` with the audio file, `chart.json`
 }
 ```
 
-**Charting tool (cheap, huge payoff):** a dev-only "record mode" — play the song, tap D F J K along with it, dump captured `{t, lane}` to JSON in the console, hand-tune. An hour to build; makes everyone on the team a chart author. Quantize taps to the nearest 1/4 or 1/2 beat using `bpm`/`offset` so charts come out clean.
+**Charting tool:** `chart-editor/` (merged via PR #1) — a standalone browser app, no build step: load a song, auto-detect BPM/onsets, verify with a metronome, hand-edit taps and holds (including D F J K play-along placement), export `chart.json` in exactly this format. See [chart-editor/README.md](chart-editor/README.md). It supersedes the in-game "record mode" this plan originally called for.
 
 ## 5. Judgement & scoring
 
@@ -150,8 +150,8 @@ src/
   ui/hud.ts            BitmapText score/combo, judgement popup animations
   art/stage.ts         full-screen layer behind the track: parallax, combo-reactive character
   net/                 (stretch) room.ts, protocol.ts
-  tools/recorder.ts    dev-only chart record mode
-public/songs/<id>/     song.ogg + chart.json + cover.png
+chart-editor/          standalone charting app (BPM/onset detection, tap+hold editing)
+public/songs/<id>/     audio file + chart.json + cover.png
 ```
 
 ### PixiJS specifics (from the installed `/pixijs-*` skills)
@@ -172,7 +172,7 @@ Ordered so the game is **playable end-to-end as early as possible**; art and pol
 | **M0** | Scaffold | Vite template runs; empty scenes switch; repo scripts documented | ~1 h |
 | **M1** | Timing core proof | Metronome plays via AudioClock; **one** lane renders scrolling notes from a hardcoded array; keypress prints judgement to console. *Proves the hard part first.* | 0.5 day |
 | **M2** | Playable game | 4 lanes, `chart.json` loading, full judgement + score/combo HUD, results screen, back-to-lobby loop. Placeholder rectangles are fine. | 1 day |
-| **M3** | Chart tooling + real song | Record-mode charting tool; one licensed/jam-legal song fully charted | 0.5 day |
+| **M3** | Real chart + holds | ~~Charting tool~~ (done: `chart-editor/`, PR #1). Author the real chart for the song in it (verify BPM/offset with its metronome); game renders hold notes as duration bars (hold *judging* can stay tap-based until M4+) | 0.5 day |
 | **M4** | Art & juice | Full-screen art layer behind the semi-transparent track (combo-reactive character/background); receptor flashes, hit popups, note skins, miss feedback; title screen | 1–1.5 days |
 | **M5** | Calibration & polish | Calibration screen (offset in localStorage), lobby track select wired to the real song list, pause/quit, volume | 0.5 day |
 | **M6** | *Stretch:* multiplayer | See §8 — invite/join from the lobby, versus with live opponent score/combo ghost | 1 day |
