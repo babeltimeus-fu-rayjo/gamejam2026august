@@ -3,25 +3,28 @@ import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { LANE_KEY_LABELS } from "../core/input";
 import type { JudgedNote } from "./judge";
 
-// Track geometry — the semi-transparent band over the art layer.
-export const TRACK_TOP = VIRTUAL_HEIGHT * 0.6;
-export const LANE_HEIGHT = (VIRTUAL_HEIGHT - TRACK_TOP) / 4;
-export const HIT_X = VIRTUAL_WIDTH - 150;
+// Track geometry — a vertical, semi-transparent band over the art layer.
+// Notes fall from the top of the screen down into the hit line.
+export const LANE_WIDTH = 100;
+export const TRACK_WIDTH = LANE_WIDTH * 4;
+export const TRACK_LEFT = Math.round((VIRTUAL_WIDTH - TRACK_WIDTH) / 2);
+export const HIT_Y = VIRTUAL_HEIGHT - 150;
 /** Note travel speed, px per second of song time. */
 export const SCROLL_SPEED = 600;
-export const NOTE_SIZE = 46;
+export const NOTE_WIDTH = LANE_WIDTH - 24;
+export const NOTE_HEIGHT = 30;
 
 const RECEPTOR_IDLE_ALPHA = 0.55;
 
 // All note sprites share one GraphicsContext: one geometry on the GPU,
 // cheap instances in the pool.
 const NOTE_CONTEXT = new GraphicsContext()
-  .roundRect(-NOTE_SIZE / 2, -NOTE_SIZE / 2, NOTE_SIZE, NOTE_SIZE, 10)
+  .roundRect(-NOTE_WIDTH / 2, -NOTE_HEIGHT / 2, NOTE_WIDTH, NOTE_HEIGHT, 10)
   .fill(0xff5c8a)
   .stroke({ width: 3, color: 0xffffff, alpha: 0.35 });
 
-function laneCenterY(lane: number): number {
-  return TRACK_TOP + (lane + 0.5) * LANE_HEIGHT;
+function laneCenterX(lane: number): number {
+  return TRACK_LEFT + (lane + 0.5) * LANE_WIDTH;
 }
 
 /**
@@ -42,20 +45,21 @@ export class Track {
   constructor() {
     const g = new Graphics();
     for (let lane = 0; lane < 4; lane++) {
-      const y = TRACK_TOP + lane * LANE_HEIGHT;
-      g.rect(0, y, VIRTUAL_WIDTH, LANE_HEIGHT).fill({
+      const x = TRACK_LEFT + lane * LANE_WIDTH;
+      g.rect(x, 0, LANE_WIDTH, VIRTUAL_HEIGHT).fill({
         color: lane % 2 === 0 ? 0x181226 : 0x1d1630,
         alpha: 0.6,
       });
     }
-    g.rect(0, TRACK_TOP - 2, VIRTUAL_WIDTH, 2).fill(0x3a2f5c);
-    g.rect(HIT_X, TRACK_TOP, 4, VIRTUAL_HEIGHT - TRACK_TOP).fill(0xff5c8a);
+    g.rect(TRACK_LEFT - 2, 0, 2, VIRTUAL_HEIGHT).fill(0x3a2f5c);
+    g.rect(TRACK_LEFT + TRACK_WIDTH, 0, 2, VIRTUAL_HEIGHT).fill(0x3a2f5c);
+    g.rect(TRACK_LEFT, HIT_Y, TRACK_WIDTH, 4).fill(0xff5c8a);
     this.view.addChild(g, this.notesLayer);
 
     for (let lane = 0; lane < 4; lane++) {
-      const cy = laneCenterY(lane);
+      const cx = laneCenterX(lane);
       const box = new Graphics()
-        .roundRect(HIT_X + 24, cy - 26, 52, 52, 8)
+        .roundRect(cx - 26, HIT_Y + 24, 52, 52, 8)
         .stroke({ width: 3, color: 0x8f7bd8 });
       box.alpha = RECEPTOR_IDLE_ALPHA;
       this.receptors.push(box);
@@ -69,7 +73,7 @@ export class Track {
         },
       });
       label.anchor.set(0.5);
-      label.position.set(HIT_X + 50, cy);
+      label.position.set(cx, HIT_Y + 50);
       this.view.addChild(box, label);
     }
   }
@@ -93,7 +97,7 @@ export class Track {
    * (parseChart guarantees it).
    */
   sync(notes: readonly JudgedNote[], songTime: number): void {
-    const lookAhead = (HIT_X + NOTE_SIZE) / SCROLL_SPEED;
+    const lookAhead = (HIT_Y + NOTE_HEIGHT) / SCROLL_SPEED;
     while (
       this.spawnCursor < notes.length &&
       notes[this.spawnCursor].t <= songTime + lookAhead
@@ -108,7 +112,7 @@ export class Track {
         this.release(note);
         continue;
       }
-      sprite.x = HIT_X - (note.t - songTime) * SCROLL_SPEED;
+      sprite.y = HIT_Y - (note.t - songTime) * SCROLL_SPEED;
     }
   }
 
@@ -119,8 +123,8 @@ export class Track {
       this.notesLayer.addChild(sprite);
     }
     sprite.visible = true;
-    sprite.x = -NOTE_SIZE;
-    sprite.y = laneCenterY(note.lane);
+    sprite.x = laneCenterX(note.lane);
+    sprite.y = -NOTE_HEIGHT;
     this.active.set(note, sprite);
   }
 

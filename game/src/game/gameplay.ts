@@ -7,7 +7,7 @@ import { LaneInput } from "../core/input";
 import { Hud } from "../ui/hud";
 import { Judge, type JudgedNote } from "./judge";
 import { ScoreState, type GameEvents, type PlayResults } from "./score";
-import { Track, TRACK_TOP } from "./track";
+import { Track } from "./track";
 import type { Scene } from "./scenes";
 
 // Lobby track select lands in M5; until then gameplay loads this song.
@@ -55,7 +55,10 @@ export class GameplayScene implements Scene {
       text: "loading chart…",
       style: { fontFamily: "Arial", fontSize: 20, fill: 0x9f8fd8 },
     });
-    this.status.position.set(24, TRACK_TOP - 32);
+    // Below the receptors, centered: the vertical track leaves no room for
+    // a full-width status line beside it.
+    this.status.anchor.set(0.5);
+    this.status.position.set(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 36);
 
     this.view.addChild(art, this.track.view, this.hud.view, this.status);
   }

@@ -1,9 +1,8 @@
 import { BitmapText, Container, Ticker } from "pixi.js";
-import { VIRTUAL_WIDTH } from "../config";
 import type { Emitter } from "../core/events";
 import type { Judgement } from "../game/judge";
 import type { GameEvents } from "../game/score";
-import { TRACK_TOP } from "../game/track";
+import { TRACK_LEFT } from "../game/track";
 
 // BitmapText throughout: score/combo/judgement change constantly, and
 // bitmap glyphs just reposition quads instead of re-rendering a canvas.
@@ -16,6 +15,10 @@ const JUDGEMENT_TINT: Readonly<Record<Judgement, number>> = {
 
 const POPUP_HOLD_MS = 250;
 const POPUP_FADE_MS = 350;
+
+// The track is a full-height column down the middle, so the HUD lives in
+// the gutter beside it rather than above it.
+const GUTTER_CENTER_X = TRACK_LEFT / 2;
 
 /** Score / combo readouts + judgement popup, driven by the gameplay bus. */
 export class Hud {
@@ -31,7 +34,9 @@ export class Hud {
       text: "SCORE 0",
       style: { fontFamily: "Arial", fontSize: 30, fill: 0xffffff },
     });
-    this.scoreText.position.set(24, TRACK_TOP - 64);
+    // Second row down: the top-left corner is reserved for gameplay's
+    // pause / lobby buttons.
+    this.scoreText.position.set(24, 80);
 
     this.comboText = new BitmapText({
       text: "",
@@ -43,7 +48,7 @@ export class Hud {
       },
     });
     this.comboText.anchor.set(0.5);
-    this.comboText.position.set(VIRTUAL_WIDTH / 2, TRACK_TOP - 48);
+    this.comboText.position.set(GUTTER_CENTER_X, 380);
 
     this.popup = new BitmapText({
       text: "",
@@ -55,7 +60,7 @@ export class Hud {
       },
     });
     this.popup.anchor.set(0.5);
-    this.popup.position.set(VIRTUAL_WIDTH / 2, TRACK_TOP - 140);
+    this.popup.position.set(GUTTER_CENTER_X, 290);
     this.popup.alpha = 0;
 
     this.view.addChild(this.scoreText, this.comboText, this.popup);
