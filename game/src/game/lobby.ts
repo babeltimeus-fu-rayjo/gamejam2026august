@@ -1,15 +1,24 @@
 import { Container, Graphics, Text, Ticker } from "pixi.js";
-import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
+import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH, type GameMode } from "../config";
 import type { Scene } from "./scenes";
 
-// M0 placeholder: static stubs for the lobby's three jobs — pick a track,
-// invite players, start. The real track list lands with charts (M3/M5);
+// M0 placeholder: static stubs for the lobby's jobs — confirm the mode, pick a
+// track, invite players, start. The real track list lands with charts (M3/M5);
 // invite/room codes land with multiplayer (M6).
-const ROWS = [
-  { label: "TRACK", value: "Demo Track — chart select lands in M3" },
-  { label: "INVITE", value: "room codes land with multiplayer (M6)" },
-  { label: "START", value: "press any key" },
-] as const;
+function rows(mode: GameMode): { label: string; value: string }[] {
+  return [
+    {
+      label: "MODE",
+      value:
+        mode === "battle"
+          ? "Battle — head to head (multiplayer lands in M6)"
+          : "Single — solo run",
+    },
+    { label: "TRACK", value: "Demo Track — chart select lands in M3" },
+    { label: "INVITE", value: "room codes land with multiplayer (M6)" },
+    { label: "START", value: "press any key" },
+  ];
+}
 
 const PANEL_WIDTH = 760;
 const PANEL_HEIGHT = 56;
@@ -22,7 +31,10 @@ export class LobbyScene implements Scene {
   private readonly startRow: Text;
   private elapsed = 0;
 
-  constructor(private readonly onStart: () => void) {
+  constructor(
+    mode: GameMode,
+    private readonly onStart: () => void,
+  ) {
     const heading = new Text({
       text: "LOBBY",
       style: {
@@ -41,7 +53,7 @@ export class LobbyScene implements Scene {
     const firstY = VIRTUAL_HEIGHT * 0.42;
     let start: Text | null = null;
 
-    ROWS.forEach((row, i) => {
+    rows(mode).forEach((row, i) => {
       const y = firstY + i * (PANEL_HEIGHT + ROW_GAP);
 
       const panel = new Graphics()
