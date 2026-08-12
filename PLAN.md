@@ -1,6 +1,6 @@
 # Rhythm Game — Implementation Plan
 
-A browser rhythm game (Magic Tiles 3 / DDR style) built with **PixiJS v8 + TypeScript + Vite**. Four horizontal lanes scroll notes toward a hit line; the player hits **D F J K** in time with the music. Reactive art fills the whole screen as a background layer; the track sits at the bottom, **semi-transparent so the art shows through**. Stretch goal: 2-player online versus over **WebRTC** (STUN + serverless signaling — no dedicated server).
+A browser rhythm game (Magic Tiles 3 / DDR style) built with **PixiJS v8 + TypeScript + Vite**. Four vertical lanes drop notes toward a hit line; the player hits **D F J K** in time with the music. Reactive art fills the whole screen as a background layer; the track is a column down the middle, **semi-transparent so the art shows through**. Stretch goal: 2-player online versus over **WebRTC** (STUN + serverless signaling — no dedicated server).
 
 ---
 
@@ -16,8 +16,8 @@ A browser rhythm game (Magic Tiles 3 / DDR style) built with **PixiJS v8 + TypeS
 // gameplay render loop — app.ticker.add(() => { ... })
 const t = clock.songTime();                    // seconds into the song
 for (const note of activeNotes) {
-  // notes close in on the hit line from the left; SCROLL_SPEED in px/sec
-  note.sprite.x = HIT_X - (note.time - t) * SCROLL_SPEED;
+  // notes fall toward the hit line from above; SCROLL_SPEED in px/sec
+  note.sprite.y = HIT_Y - (note.time - t) * SCROLL_SPEED;
 }
 ```
 
@@ -53,21 +53,20 @@ Gotcha from the skills: on Vite ≤ 6.0.6 top-level `await` breaks production bu
 
 ```
 ┌──────────────────────────────────────────────┐
-│                                              │
-│     ART LAYER — fills the whole screen,      │   parallax bg + character whose
-│     sits BEHIND everything below             │   animation reacts to combo/misses
-│                                              │
-│ HUD: score ······· combo ······· judgement   │
-│┈┈┈┈┈┈┈ track: SEMI-TRANSPARENT over art ┈┈┈┈│
-│  notes scroll right →          ● ······ ● ►D │
-│                 ●            ●            ►F │  TRACK (bottom ~40%)
-│       ●        ●                   ●      ►J │  4 lanes, hit line on the RIGHT
-│            ●                  ●           ►K │  receptors light up on press
+│ SCORE 0        ┊  ▄  ┊     ┊     ┊        │  │  ART LAYER — fills the whole
+│                ┊     ┊  ▄  ┊     ┊  ▄     │  │  screen, sits BEHIND the track
+│                ┊     ┊     ┊     ┊        │  │
+│    PERFECT     ┊  ▄  ┊     ┊  ▄  ┊        │  │  TRACK: centered column,
+│                ┊     ┊  ▄  ┊     ┊        │  │  SEMI-TRANSPARENT over art
+│    12 COMBO    ┊     ┊     ┊     ┊  ▄     │  │  notes fall ↓
+│                ┊     ┊     ┊     ┊        │  │
+│                ━━━━━━━━━━━━━━━━━━━━━━━━━━━┫  │  hit line near the BOTTOM
+│                  [D]   [F]   [J]   [K]       │  receptors light up on press
 └──────────────────────────────────────────────┘
 ```
 
-- **Keys D F J K** → lanes top-to-bottom (two per hand, no OS shortcut collisions). Keymap in one const so it's trivially rebindable.
-- Notes spawn off-screen left, scroll right, are judged at the hit line on the right edge, and despawn (to the pool) after the miss window. Scroll direction lives in one sign constant, so flipping it later is a one-line change.
+- **Keys D F J K** → lanes left-to-right (two per hand, no OS shortcut collisions). Keymap in one const so it's trivially rebindable.
+- Notes spawn above the screen, fall down, are judged at the hit line near the bottom, and despawn (to the pool) after the miss window. Scroll direction lives in one sign constant, so flipping it later is a one-line change.
 - **Scaling:** design against a 1280×720 virtual canvas; on `resize`, uniformly scale the root container (`scale = min(w/1280, h/720)`) and center it. Letterboxing beats fluid layout for jam scope. `resizeTo: window` keeps the canvas itself full-size.
 - **Scene flow:** Title → **Lobby** → Gameplay → Results → back to Lobby. The lobby is the hub: pick the track, invite/join other players (stretch, §8), and start.
 

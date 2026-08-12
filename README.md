@@ -1,6 +1,6 @@
 # gamejam2026august — Rhythm Game
 
-Browser rhythm game (Magic Tiles 3 / DDR style): 4 horizontal lanes, notes scroll left-to-right into a hit line on the right edge, played with **D F J K**. PixiJS v8 + TypeScript + Vite.
+Browser rhythm game (Magic Tiles 3 / DDR style): 4 vertical lanes, notes fall top-to-bottom into a hit line near the bottom, played with **D F J K**. PixiJS v8 + TypeScript + Vite.
 
 **Read [PLAN.md](PLAN.md) first** — architecture, milestones (M0–M6), and team split live there.
 
@@ -33,7 +33,7 @@ python -m http.server 8123    # then open http://localhost:8123
 
 ## Current state
 
-**M2 (playable game) done:** gameplay loads `chart.json` (validated by `core/beatmap.ts`) and the song it names, scrolls pooled note sprites across all 4 lanes into the hit line, and scores hits through ±45/90/135 ms windows — score/combo and judgement popups render as BitmapText (`ui/hud.ts`), systems talk over a typed event bus (`core/events.ts`), and the results screen shows grade/score/accuracy/max-combo before looping back to the lobby. The current chart is a generated beat-grid placeholder (226 notes at 128 BPM) — real charting lands with the **M3** record-mode tool. Art renders full-screen behind the semi-transparent track.
+**M2 (playable game) done:** gameplay loads `chart.json` (validated by `core/beatmap.ts`) and the song it names, drops pooled note sprites down all 4 lanes into the hit line, and scores hits through ±45/90/135 ms windows — score/combo and judgement popups render as BitmapText (`ui/hud.ts`), systems talk over a typed event bus (`core/events.ts`), and the results screen shows grade/score/accuracy/max-combo before looping back to the lobby. The current chart is a generated beat-grid placeholder (226 notes at 128 BPM) — real charting lands with the **M3** record-mode tool. Art renders full-screen behind the semi-transparent track.
 
 ## For Claude Code users
 

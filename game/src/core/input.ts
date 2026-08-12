@@ -1,6 +1,6 @@
 /**
  * Lane input: physical keys D F J K (by e.code, so it survives non-QWERTY
- * layouts) mapped to lanes 0..3 top-to-bottom. Judgement must read the
+ * layouts) mapped to lanes 0..3 left-to-right. Judgement must read the
  * clock inside the handler, so the callback fires synchronously from
  * keydown — never deferred to the next frame.
  */
