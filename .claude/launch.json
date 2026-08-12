@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "game", "run", "dev"],
       "port": 8080
+    },
+    {
+      "name": "chart-editor",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8123", "--directory", "chart-editor"],
+      "port": 8123
     }
   ]
 }
