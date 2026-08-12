@@ -1,6 +1,6 @@
 # Rhythm Game — Implementation Plan
 
-A browser rhythm game (Magic Tiles 3 / DDR style) built with **PixiJS v8 + TypeScript + Vite**. Four horizontal lanes scroll notes toward a hit line; the player hits **D F J K** in time with the music. The track occupies the bottom of the screen; the top is reserved for reactive art. Stretch goal: 2-player online versus over **WebRTC** (STUN + serverless signaling — no dedicated server).
+A browser rhythm game (Magic Tiles 3 / DDR style) built with **PixiJS v8 + TypeScript + Vite**. Four horizontal lanes scroll notes toward a hit line; the player hits **D F J K** in time with the music. Reactive art fills the whole screen as a background layer; the track sits at the bottom, **semi-transparent so the art shows through**. Stretch goal: 2-player online versus over **WebRTC** (STUN + serverless signaling — no dedicated server).
 
 ---
 
@@ -53,17 +53,17 @@ Gotcha from the skills: on Vite ≤ 6.0.6 top-level `await` breaks production bu
 
 ```
 ┌──────────────────────────────────────────────┐
-│                 ART AREA (~60%)              │   parallax bg, character whose
-│      dance intensity scales with combo       │   animation reacts to combo/misses
 │                                              │
-├──────────────────────────────────────────────┤
+│     ART LAYER — fills the whole screen,      │   parallax bg + character whose
+│     sits BEHIND everything below             │   animation reacts to combo/misses
+│                                              │
 │ HUD: score ······· combo ······· judgement   │
-├───────────────────────────────────────────┬──┤
-│  notes scroll right →          ● ······ ● │►D│
-│                 ●            ●            │►F│  TRACK (~40%)
-│       ●        ●                   ●      │►J│  4 lanes, hit line on the RIGHT
-│            ●                  ●           │►K│  receptors light up on press
-└───────────────────────────────────────────┴──┘
+│┈┈┈┈┈┈┈ track: SEMI-TRANSPARENT over art ┈┈┈┈│
+│  notes scroll right →          ● ······ ● ►D │
+│                 ●            ●            ►F │  TRACK (bottom ~40%)
+│       ●        ●                   ●      ►J │  4 lanes, hit line on the RIGHT
+│            ●                  ●           ►K │  receptors light up on press
+└──────────────────────────────────────────────┘
 ```
 
 - **Keys D F J K** → lanes top-to-bottom (two per hand, no OS shortcut collisions). Keymap in one const so it's trivially rebindable.
@@ -148,7 +148,7 @@ src/
     judge.ts           windows, nearest-note resolution, miss sweep
     score.ts           score/combo/accuracy state machine
   ui/hud.ts            BitmapText score/combo, judgement popup animations
-  art/stage.ts         top area: parallax layers, combo-reactive character
+  art/stage.ts         full-screen layer behind the track: parallax, combo-reactive character
   net/                 (stretch) room.ts, protocol.ts
   tools/recorder.ts    dev-only chart record mode
 public/songs/<id>/     song.ogg + chart.json + cover.png
@@ -173,7 +173,7 @@ Ordered so the game is **playable end-to-end as early as possible**; art and pol
 | **M1** | Timing core proof | Metronome plays via AudioClock; **one** lane renders scrolling notes from a hardcoded array; keypress prints judgement to console. *Proves the hard part first.* | 0.5 day |
 | **M2** | Playable game | 4 lanes, `chart.json` loading, full judgement + score/combo HUD, results screen, back-to-lobby loop. Placeholder rectangles are fine. | 1 day |
 | **M3** | Chart tooling + real song | Record-mode charting tool; one licensed/jam-legal song fully charted | 0.5 day |
-| **M4** | Art & juice | Top art area with combo-reactive character/background; receptor flashes, hit popups, note skins, miss feedback; title screen | 1–1.5 days |
+| **M4** | Art & juice | Full-screen art layer behind the semi-transparent track (combo-reactive character/background); receptor flashes, hit popups, note skins, miss feedback; title screen | 1–1.5 days |
 | **M5** | Calibration & polish | Calibration screen (offset in localStorage), lobby track select wired to the real song list, pause/quit, volume | 0.5 day |
 | **M6** | *Stretch:* multiplayer | See §8 — invite/join from the lobby, versus with live opponent score/combo ghost | 1 day |
 
@@ -207,7 +207,7 @@ Cut lines if time runs short, in order: M6 → extra tracks in the lobby → pau
 | Chart authoring eats the schedule | Record-mode tool (M3) before hand-tuning |
 | Music licensing | Pick jam-legal/CC track early, credit in-game |
 | WebRTC NAT failures | Trystero + STUN covers most pairs; clear failure message; single-player unaffected |
-| Scope creep in art area | Art layer only consumes events; it can ship as a static image if needed |
+| Scope creep in the art layer | It only consumes events; it can ship as a static image if needed. Keep track legibility over art: lanes carry a dark tint, notes stay opaque |
 
 ## 10. Suggested team split
 

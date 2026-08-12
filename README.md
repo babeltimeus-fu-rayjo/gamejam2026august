@@ -24,7 +24,7 @@ Other scripts (run inside `game/`):
 
 ## Current state
 
-**M0 (scaffold) done:** app boots into a 1280×720 letterboxed virtual canvas and cycles four placeholder scenes — Title → (any key) → Lobby → (Enter) → Gameplay wireframe → (Enter) → Results → (Enter) → back to Lobby. Next up is **M1**: the Web Audio timing core.
+**M1 (timing core) done:** gameplay plays the real song through the Web Audio clock (`core/clock.ts`) and scrolls a hardcoded lane-F test pattern into the right-edge hit line, with metronome clicks on note times, PERFECT/GREAT/GOOD/MISS judgements logged to the console (`game/judge.ts`, ±45/90/135 ms), and auto-advance to results. Art renders full-screen behind the semi-transparent track. Scene flow: Title → Lobby → Gameplay → Results → Lobby. Next up is **M2**: 4-lane charts from `chart.json` with scoring + HUD.
 
 ## For Claude Code users
 
