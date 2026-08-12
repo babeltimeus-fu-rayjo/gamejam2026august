@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "song": {
+    "title": "Everyday is extraordinary",
+    "artist": "",
+    "audioFile": "Everyday is extraordinary.mp3",
+    "duration": 160.836
+  },
+  "bpm": 128.0,
+  "offset": 0.0,
+  "lanes": 4,
+  "notes": []
+}

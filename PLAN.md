@@ -36,6 +36,8 @@ Everything else in this plan is ordinary game code; this part is the genre's har
 | Language | TypeScript | Beatmap/protocol types catch jam-night mistakes |
 | Multiplayer (stretch) | WebRTC DataChannel + public STUN + serverless signaling | No dedicated server to build or host |
 
+**Deploy:** GitHub Pages, auto-deployed from `main` by GitHub Actions (`.github/workflows/deploy.yml` builds `game/` and publishes `game/dist`). Vite uses `base: "./"` so asset URLs stay relative; runtime fetches (charts, audio) must use `import.meta.env.BASE_URL` prefixes, not absolute `/` paths. Pages is a static host, which is exactly why the multiplayer design (§8) needs no server of ours.
+
 Gotcha from the skills: on Vite ≤ 6.0.6 top-level `await` breaks production builds — wrap boot in an async IIFE:
 
 ```ts
@@ -67,22 +69,27 @@ Gotcha from the skills: on Vite ≤ 6.0.6 top-level `await` breaks production bu
 - **Keys D F J K** → lanes top-to-bottom (two per hand, no OS shortcut collisions). Keymap in one const so it's trivially rebindable.
 - Notes spawn off-screen left, scroll right, are judged at the hit line on the right edge, and despawn (to the pool) after the miss window. Scroll direction lives in one sign constant, so flipping it later is a one-line change.
 - **Scaling:** design against a 1280×720 virtual canvas; on `resize`, uniformly scale the root container (`scale = min(w/1280, h/720)`) and center it. Letterboxing beats fluid layout for jam scope. `resizeTo: window` keeps the canvas itself full-size.
+- **Scene flow:** Title → **Lobby** → Gameplay → Results → back to Lobby. The lobby is the hub: pick the track, invite/join other players (stretch, §8), and start.
 
 ## 4. Beatmap format
 
-One folder per song under `public/songs/<id>/` with `song.ogg`, `chart.json`, `cover.png`.
+One folder per song under `public/songs/<id>/` with the audio file, `chart.json`, `cover.png`. The format is versioned so charts survive schema changes, and it includes holds from day one — MVP gameplay judges taps only and treats holds as taps until the hold mechanic lands (post-M2). Types + validator: `src/core/beatmap.ts` (`parseChart`).
 
 ```jsonc
 {
-  "title": "Neon Sprint",
-  "artist": "…",
-  "audio": "song.ogg",
-  "bpm": 128,            // authoring metadata; gameplay uses absolute times
-  "offset": 0.35,        // seconds from audio start to beat 0
-  "notes": [
-    { "t": 1.875, "lane": 0 },     // t = seconds; lane = 0..3
-    { "t": 2.109, "lane": 2 }
-    // stretch: { "t": 5.0, "lane": 1, "hold": 1.5 }
+  "version": 1,
+  "song": {
+    "title": "Everyday is extraordinary",
+    "artist": "",
+    "audioFile": "Everyday is extraordinary.mp3",
+    "duration": 214.3            // seconds; drives progress bar + results
+  },
+  "bpm": 128.0,                  // authoring metadata; gameplay uses absolute times
+  "offset": 0.412,               // seconds from audio start to beat 0
+  "lanes": 4,
+  "notes": [                     // t = seconds; lane = 0..lanes-1
+    { "t": 1.812, "lane": 0, "type": "tap" },
+    { "t": 2.281, "lane": 2, "type": "hold", "d": 0.938 }
   ]
 }
 ```
@@ -134,7 +141,8 @@ src/
     events.ts          tiny typed event bus
     beatmap.ts         types, loader, validation, beat↔seconds helpers
   game/
-    scenes.ts          Scene interface + manager (Title → Gameplay → Results)
+    scenes.ts          Scene interface + manager (Title → Lobby → Gameplay → Results)
+    lobby.ts           track select, invite/join players (M6), start
     gameplay.ts        wires clock+input+track+judge+hud+art for one song
     track.ts           lanes, receptors, note sprite pool, scroll rendering
     judge.ts           windows, nearest-note resolution, miss sweep
@@ -163,13 +171,13 @@ Ordered so the game is **playable end-to-end as early as possible**; art and pol
 |---|---|---|---|
 | **M0** | Scaffold | Vite template runs; empty scenes switch; repo scripts documented | ~1 h |
 | **M1** | Timing core proof | Metronome plays via AudioClock; **one** lane renders scrolling notes from a hardcoded array; keypress prints judgement to console. *Proves the hard part first.* | 0.5 day |
-| **M2** | Playable game | 4 lanes, `chart.json` loading, full judgement + score/combo HUD, results screen, restart. Placeholder rectangles are fine. | 1 day |
+| **M2** | Playable game | 4 lanes, `chart.json` loading, full judgement + score/combo HUD, results screen, back-to-lobby loop. Placeholder rectangles are fine. | 1 day |
 | **M3** | Chart tooling + real song | Record-mode charting tool; one licensed/jam-legal song fully charted | 0.5 day |
 | **M4** | Art & juice | Top art area with combo-reactive character/background; receptor flashes, hit popups, note skins, miss feedback; title screen | 1–1.5 days |
-| **M5** | Calibration & polish | Calibration screen (offset in localStorage), song select (if >1 song), pause/quit, volume | 0.5 day |
-| **M6** | *Stretch:* multiplayer | See §8 — versus mode with live opponent score/combo ghost | 1 day |
+| **M5** | Calibration & polish | Calibration screen (offset in localStorage), lobby track select wired to the real song list, pause/quit, volume | 0.5 day |
+| **M6** | *Stretch:* multiplayer | See §8 — invite/join from the lobby, versus with live opponent score/combo ghost | 1 day |
 
-Cut lines if time runs short, in order: M6 → song select → pause → hold notes (never planned for MVP).
+Cut lines if time runs short, in order: M6 → extra tracks in the lobby → pause → hold notes (never planned for MVP).
 
 ## 8. Stretch goal: serverless multiplayer (WebRTC)
 
@@ -187,7 +195,7 @@ Cut lines if time runs short, in order: M6 → song select → pause → hold no
 
 **Protocol** (`net/protocol.ts`, tiny JSON messages): `hello` (name, chart hash) → `ready` → `start` (host schedules "begin at local-audio-clock + 2 s" after a few ping samples to align countdowns) → `hit {t, lane, judgement, combo, score}` / periodic `state` → `finish {score, acc, maxCombo}`. Late/dropped messages only stale the ghost — harmless.
 
-**UI:** opponent score/combo ghost pinned to the HUD; final side-by-side on results. Both clients verify the same chart hash before starting.
+**UI:** the lobby hosts the invite/join flow (create room → share a short code; join by typing one) and per-player ready states; during play an opponent score/combo ghost pins to the HUD; final side-by-side on results. Both clients verify the same chart hash before starting.
 
 ## 9. Risks & mitigations
 
