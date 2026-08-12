@@ -4,6 +4,7 @@ import {
   LETTERBOX_COLOR,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
+  type GameMode,
 } from "./config";
 import { SceneManager } from "./game/scenes";
 import { TitleScene } from "./game/title";
@@ -57,8 +58,17 @@ import type { PlayResults } from "./game/score";
   // Scene flow: title -> lobby -> gameplay -> results -> back to lobby.
   // Fresh instances per switch; wiring lives here so scenes stay ignorant
   // of each other.
-  const toLobby = (): void => scenes.switchTo(new LobbyScene(toGameplay));
-  const toTitle = (): void => scenes.switchTo(new TitleScene(toLobby));
+  // Picked on the title screen and remembered so results can return to the
+  // lobby in the same mode.
+  let mode: GameMode = "single";
+  const toLobby = (): void => scenes.switchTo(new LobbyScene(mode, toGameplay));
+  const toTitle = (): void =>
+    scenes.switchTo(
+      new TitleScene((picked) => {
+        mode = picked;
+        toLobby();
+      }),
+    );
   const toGameplay = (): void =>
     scenes.switchTo(new GameplayScene(toResults, toLobby));
   const toResults = (results: PlayResults): void =>
