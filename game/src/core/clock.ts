@@ -42,6 +42,21 @@ export class AudioClock {
     return this.running;
   }
 
+  /**
+   * Freeze playback in place. Suspending the context halts
+   * AudioContext.currentTime itself, so songTime() freezes with the audio
+   * and resume() continues from the exact same position.
+   */
+  async pause(): Promise<void> {
+    if (this.ctx.state === "running") {
+      try {
+        await this.ctx.suspend();
+      } catch {
+        // Context is closing; nothing to freeze.
+      }
+    }
+  }
+
   /** Fetch and decode the song. Decoding works even while suspended. */
   async load(url: string): Promise<void> {
     const res = await fetch(url);

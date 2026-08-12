@@ -6,7 +6,9 @@ export default defineConfig({
   // Runtime fetches must prefix import.meta.env.BASE_URL (see PLAN.md).
   base: "./",
   server: {
-    port: 8080,
+    // PORT lets tooling (e.g. Claude Code previews) assign a free port when
+    // 8080 is already taken by another dev-server instance.
+    port: Number(process.env.PORT) || 8080,
     open: false,
   },
 });

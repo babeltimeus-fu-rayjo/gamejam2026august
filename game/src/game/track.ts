@@ -1,7 +1,7 @@
 import { Container, Graphics, GraphicsContext, Text, Ticker } from "pixi.js";
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { LANE_KEY_LABELS } from "../core/input";
-import type { JudgedNote } from "./judge";
+import type { JudgedNote, Judgement } from "./judge";
 
 // Track geometry — a vertical, semi-transparent band over the art layer.
 // Notes fall from the top of the screen down into the hit line.
@@ -16,12 +16,49 @@ export const NOTE_HEIGHT = 30;
 
 const RECEPTOR_IDLE_ALPHA = 0.55;
 
-// All note sprites share one GraphicsContext: one geometry on the GPU,
-// cheap instances in the pool.
-const NOTE_CONTEXT = new GraphicsContext()
+// Per-lane palette (D F J K) shared by notes, receptors, and key labels:
+// dusty, desaturated arcane-ish tones — rose, amethyst, jade, antique
+// gold — so lanes read apart without going neon on the dark backdrop.
+// `label` is the same hue lifted toward white for text legibility.
+const LANE_COLORS = [
+  { note: 0xc9708e, label: 0xe3b3c4 }, // dusty rose
+  { note: 0x9678c8, label: 0xc7b4e6 }, // muted amethyst
+  { note: 0x7cb583, label: 0xb9d9bd }, // sage jade
+  { note: 0xc7a763, label: 0xe3d0a4 }, // antique gold
+] as const;
+
+// One shared GraphicsContext per lane: four geometries on the GPU total,
+// cheap instances in the pool. acquire() swaps a sprite's context to match
+// its note's lane, so the pool stays lane-agnostic.
+const NOTE_CONTEXTS = LANE_COLORS.map(({ note }) =>
+  new GraphicsContext()
+    .roundRect(-NOTE_WIDTH / 2, -NOTE_HEIGHT / 2, NOTE_WIDTH, NOTE_HEIGHT, 10)
+    .fill(note)
+    .stroke({ width: 3, color: 0xffffff, alpha: 0.35 }),
+);
+
+// Hit burst — when a note is keyed in time it flashes bright at the hit
+// line, blooms outward, and fades. White geometry tinted with the lane's
+// light variant + additive blend reads as light, not paint, and stays in
+// the muted palette. Intensity scales with judgement quality; misses get
+// nothing.
+const BURST_DURATION_MS = 280;
+const BURST_MAX_SCALE = 1.55;
+const BURST_INTENSITY: Readonly<Record<Judgement, number>> = {
+  perfect: 1,
+  great: 0.75,
+  good: 0.5,
+  miss: 0,
+};
+const BURST_CONTEXT = new GraphicsContext()
   .roundRect(-NOTE_WIDTH / 2, -NOTE_HEIGHT / 2, NOTE_WIDTH, NOTE_HEIGHT, 10)
-  .fill(0xff5c8a)
-  .stroke({ width: 3, color: 0xffffff, alpha: 0.35 });
+  .fill(0xffffff);
+
+interface Burst {
+  sprite: Graphics;
+  ageMs: number;
+  intensity: number;
+}
 
 function laneCenterX(lane: number): number {
   return TRACK_LEFT + (lane + 0.5) * LANE_WIDTH;
@@ -37,7 +74,10 @@ export class Track {
 
   private readonly receptors: Graphics[] = [];
   private readonly notesLayer = new Container();
+  private readonly burstLayer = new Container();
   private readonly pool: Graphics[] = [];
+  private readonly burstPool: Graphics[] = [];
+  private readonly bursts: Burst[] = [];
   private readonly active = new Map<JudgedNote, Graphics>();
   /** Index into the (sorted) note list of the next note to spawn. */
   private spawnCursor = 0;
@@ -53,14 +93,14 @@ export class Track {
     }
     g.rect(TRACK_LEFT - 2, 0, 2, VIRTUAL_HEIGHT).fill(0x3a2f5c);
     g.rect(TRACK_LEFT + TRACK_WIDTH, 0, 2, VIRTUAL_HEIGHT).fill(0x3a2f5c);
-    g.rect(TRACK_LEFT, HIT_Y, TRACK_WIDTH, 4).fill(0xff5c8a);
-    this.view.addChild(g, this.notesLayer);
+    g.rect(TRACK_LEFT, HIT_Y, TRACK_WIDTH, 4).fill(0xbfb3e0);
+    this.view.addChild(g, this.notesLayer, this.burstLayer);
 
     for (let lane = 0; lane < 4; lane++) {
       const cx = laneCenterX(lane);
       const box = new Graphics()
         .roundRect(cx - 26, HIT_Y + 24, 52, 52, 8)
-        .stroke({ width: 3, color: 0x8f7bd8 });
+        .stroke({ width: 3, color: LANE_COLORS[lane].note });
       box.alpha = RECEPTOR_IDLE_ALPHA;
       this.receptors.push(box);
       const label = new Text({
@@ -69,7 +109,7 @@ export class Track {
           fontFamily: "Arial",
           fontSize: 28,
           fontWeight: "700",
-          fill: 0xcfc4f2,
+          fill: LANE_COLORS[lane].label,
         },
       });
       label.anchor.set(0.5);
@@ -82,11 +122,46 @@ export class Track {
     this.receptors[lane].alpha = 1;
   }
 
+  /** Flash-and-bloom at the hit line for a note keyed in time. */
+  hitBurst(lane: number, judgement: Judgement): void {
+    const intensity = BURST_INTENSITY[judgement];
+    if (intensity <= 0) return;
+    let sprite = this.burstPool.pop();
+    if (!sprite) {
+      sprite = new Graphics(BURST_CONTEXT);
+      sprite.blendMode = "add";
+      this.burstLayer.addChild(sprite);
+    }
+    sprite.tint = LANE_COLORS[lane].label;
+    sprite.position.set(laneCenterX(lane), HIT_Y);
+    sprite.scale.set(1);
+    sprite.alpha = intensity;
+    sprite.visible = true;
+    this.bursts.push({ sprite, ageMs: 0, intensity });
+  }
+
   update(ticker: Ticker): void {
     for (const receptor of this.receptors) {
       receptor.alpha = Math.max(
         RECEPTOR_IDLE_ALPHA,
         receptor.alpha - ticker.deltaMS / 200,
+      );
+    }
+
+    for (let i = this.bursts.length - 1; i >= 0; i--) {
+      const burst = this.bursts[i];
+      burst.ageMs += ticker.deltaMS;
+      const p = burst.ageMs / BURST_DURATION_MS;
+      if (p >= 1) {
+        burst.sprite.visible = false;
+        this.burstPool.push(burst.sprite);
+        this.bursts.splice(i, 1);
+        continue;
+      }
+      const fade = (1 - p) ** 2; // starts at full flash, eases out
+      burst.sprite.alpha = burst.intensity * fade;
+      burst.sprite.scale.set(
+        1 + (BURST_MAX_SCALE - 1) * (1 - fade) * burst.intensity,
       );
     }
   }
@@ -119,9 +194,10 @@ export class Track {
   private acquire(note: JudgedNote): void {
     let sprite = this.pool.pop();
     if (!sprite) {
-      sprite = new Graphics(NOTE_CONTEXT);
+      sprite = new Graphics(NOTE_CONTEXTS[note.lane]);
       this.notesLayer.addChild(sprite);
     }
+    sprite.context = NOTE_CONTEXTS[note.lane];
     sprite.visible = true;
     sprite.x = laneCenterX(note.lane);
     sprite.y = -NOTE_HEIGHT;
