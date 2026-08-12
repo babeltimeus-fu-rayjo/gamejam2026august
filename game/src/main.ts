@@ -59,7 +59,8 @@ import type { PlayResults } from "./game/score";
   // of each other.
   const toLobby = (): void => scenes.switchTo(new LobbyScene(toGameplay));
   const toTitle = (): void => scenes.switchTo(new TitleScene(toLobby));
-  const toGameplay = (): void => scenes.switchTo(new GameplayScene(toResults));
+  const toGameplay = (): void =>
+    scenes.switchTo(new GameplayScene(toResults, toLobby));
   const toResults = (results: PlayResults): void =>
     scenes.switchTo(new ResultsScene(results, toLobby));
 

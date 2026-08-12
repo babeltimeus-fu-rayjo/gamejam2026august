@@ -5,7 +5,8 @@
       "name": "game",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "game", "run", "dev"],
-      "port": 8080
+      "port": 8080,
+      "autoPort": true
     },
     {
       "name": "chart-editor",

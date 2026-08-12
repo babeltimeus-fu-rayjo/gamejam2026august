@@ -8,14 +8,14 @@ import type { Scene } from "./scenes";
 const ROWS = [
   { label: "TRACK", value: "Demo Track — chart select lands in M3" },
   { label: "INVITE", value: "room codes land with multiplayer (M6)" },
-  { label: "START", value: "press Enter" },
+  { label: "START", value: "press any key" },
 ] as const;
 
 const PANEL_WIDTH = 760;
 const PANEL_HEIGHT = 56;
 const ROW_GAP = 18;
 
-/** Placeholder lobby: track select + invite stubs, Enter starts the game. */
+/** Placeholder lobby: track select + invite stubs, any key starts the game. */
 export class LobbyScene implements Scene {
   readonly view = new Container();
 
@@ -77,7 +77,8 @@ export class LobbyScene implements Scene {
   }
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
-    if (e.key === "Enter") this.onStart();
+    if (e.repeat) return;
+    this.onStart();
   };
 
   enter(): void {
