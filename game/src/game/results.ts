@@ -1,40 +1,69 @@
 import { Container, Text } from "pixi.js";
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
+import type { PlayResults } from "./score";
 import type { Scene } from "./scenes";
 
-/** Placeholder results screen: Enter returns to the lobby. */
+const GRADE_TINT: Readonly<Record<string, number>> = {
+  S: 0xffd75c,
+  A: 0x5cd7ff,
+  B: 0x7de07d,
+  C: 0x9f8fd8,
+  D: 0xff5c5c,
+};
+
+/** Results screen: grade + numbers from the play; Enter returns to lobby. */
 export class ResultsScene implements Scene {
   readonly view = new Container();
 
-  constructor(private readonly onDone: () => void) {
-    const heading = new Text({
-      text: "RESULTS",
+  constructor(
+    results: PlayResults,
+    private readonly onDone: () => void,
+  ) {
+    const grade = new Text({
+      text: results.grade,
       style: {
         fontFamily: "Arial",
-        fontSize: 72,
+        fontSize: 160,
         fontWeight: "900",
-        letterSpacing: 6,
-        fill: 0xffffff,
+        fill: GRADE_TINT[results.grade] ?? 0xffffff,
       },
     });
-    heading.anchor.set(0.5);
-    heading.position.set(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.35);
+    grade.anchor.set(0.5);
+    grade.position.set(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.28);
 
-    const body = new Text({
-      text: "score / accuracy / max combo land in M2",
-      style: { fontFamily: "Arial", fontSize: 28, fill: 0x9f8fd8 },
-    });
-    body.anchor.set(0.5);
-    body.position.set(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.5);
+    const line = (
+      text: string,
+      y: number,
+      fontSize: number,
+      fill: number,
+    ): Text => {
+      const t = new Text({
+        text,
+        style: { fontFamily: "Arial", fontSize, fill },
+      });
+      t.anchor.set(0.5);
+      t.position.set(VIRTUAL_WIDTH / 2, y);
+      return t;
+    };
 
-    const hint = new Text({
-      text: "press Enter for lobby",
-      style: { fontFamily: "Arial", fontSize: 24, fill: 0x5a4d85 },
-    });
-    hint.anchor.set(0.5);
-    hint.position.set(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.68);
-
-    this.view.addChild(heading, body, hint);
+    const c = results.counts;
+    const accuracyPct = (results.accuracy * 100).toFixed(1);
+    this.view.addChild(
+      grade,
+      line(
+        `SCORE ${results.score}   ·   ACCURACY ${accuracyPct}%   ·   MAX COMBO ${results.maxCombo}`,
+        VIRTUAL_HEIGHT * 0.52,
+        32,
+        0xffffff,
+      ),
+      line(
+        `perfect ${c.perfect} · great ${c.great} · good ${c.good} · miss ${c.miss}`,
+        VIRTUAL_HEIGHT * 0.62,
+        24,
+        0x9f8fd8,
+      ),
+      line("press Enter for lobby", VIRTUAL_HEIGHT * 0.78, 24, 0x5a4d85),
+    );
   }
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
@@ -49,7 +78,5 @@ export class ResultsScene implements Scene {
     window.removeEventListener("keydown", this.onKeyDown);
   }
 
-  update(): void {
-    // static screen
-  }
+  update(): void {}
 }

@@ -10,6 +10,7 @@ import { TitleScene } from "./game/title";
 import { LobbyScene } from "./game/lobby";
 import { GameplayScene } from "./game/gameplay";
 import { ResultsScene } from "./game/results";
+import type { PlayResults } from "./game/score";
 
 // Async IIFE: top-level await breaks production builds on older Vite.
 (async () => {
@@ -59,7 +60,8 @@ import { ResultsScene } from "./game/results";
   const toLobby = (): void => scenes.switchTo(new LobbyScene(toGameplay));
   const toTitle = (): void => scenes.switchTo(new TitleScene(toLobby));
   const toGameplay = (): void => scenes.switchTo(new GameplayScene(toResults));
-  const toResults = (): void => scenes.switchTo(new ResultsScene(toLobby));
+  const toResults = (results: PlayResults): void =>
+    scenes.switchTo(new ResultsScene(results, toLobby));
 
   app.ticker.add((ticker) => {
     if (app.screen.width !== lastWidth || app.screen.height !== lastHeight) {

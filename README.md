@@ -24,7 +24,7 @@ Other scripts (run inside `game/`):
 
 ## Current state
 
-**M1 (timing core) done:** gameplay plays the real song through the Web Audio clock (`core/clock.ts`) and scrolls a hardcoded lane-F test pattern into the right-edge hit line, with metronome clicks on note times, PERFECT/GREAT/GOOD/MISS judgements logged to the console (`game/judge.ts`, ±45/90/135 ms), and auto-advance to results. Art renders full-screen behind the semi-transparent track. Scene flow: Title → Lobby → Gameplay → Results → Lobby. Next up is **M2**: 4-lane charts from `chart.json` with scoring + HUD.
+**M2 (playable game) done:** gameplay loads `chart.json` (validated by `core/beatmap.ts`) and the song it names, scrolls pooled note sprites across all 4 lanes into the hit line, and scores hits through ±45/90/135 ms windows — score/combo and judgement popups render as BitmapText (`ui/hud.ts`), systems talk over a typed event bus (`core/events.ts`), and the results screen shows grade/score/accuracy/max-combo before looping back to the lobby. The current chart is a generated beat-grid placeholder (226 notes at 128 BPM) — real charting lands with the **M3** record-mode tool. Art renders full-screen behind the semi-transparent track.
 
 ## For Claude Code users
 
