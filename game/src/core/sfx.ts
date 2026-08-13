@@ -3,30 +3,39 @@ import type { Judgement } from "../game/judge";
 /**
  * One-shot hit feedback, synthesized — no samples to load. Hi-hat style:
  * every sound is a burst of high-passed white noise, which reads as
- * percussion and sits naturally on top of any song. Everything is
- * deliberately quiet and short: the effects confirm "you hit that beat"
- * under the song, they never compete with it.
+ * percussion and sits naturally on top of any song. Everything is short,
+ * but not quiet: the effects have to read as *your* hit over a full-scale
+ * song, so they sit on top of the mix rather than under it.
  *
  * Plays through the AudioClock's context (same unlock, same clock); the
  * clock's destroy() closes the context and takes these with it.
  */
 
-/** Highpass cutoff per tier — the cleaner the hit, the brighter the hat. */
+/**
+ * Highpass cutoff per tier — the cleaner the hit, the brighter the hat.
+ * Kept below ~7 kHz: the song is loud and full-scale, and a burst living
+ * only in the top octave disappears into it however loud we make it.
+ */
 const HIT_CUTOFF: Readonly<Record<Exclude<Judgement, "miss">, number>> = {
-  good: 6000,
-  great: 8000,
-  perfect: 10000,
+  good: 3500,
+  great: 5000,
+  perfect: 6500,
 };
 
+/**
+ * Peak gain per tier. The song runs straight to the destination at full
+ * scale, so these have to be a real fraction of it to be audible at all —
+ * anything at 0.1 is buried.
+ */
 const HIT_PEAK: Readonly<Record<Exclude<Judgement, "miss">, number>> = {
-  good: 0.07,
-  great: 0.09,
-  perfect: 0.11,
+  good: 0.3,
+  great: 0.38,
+  perfect: 0.45,
 };
 
 /** A closed hat is a tick; an open hat rings ~4x longer. */
-const CLOSED_DECAY_S = 0.06;
-const OPEN_DECAY_S = 0.28;
+const CLOSED_DECAY_S = 0.07;
+const OPEN_DECAY_S = 0.3;
 
 export class Sfx {
   private readonly master: GainNode;
@@ -81,7 +90,7 @@ export class Sfx {
    */
   holdStart(judgement: Exclude<Judgement, "miss">): void {
     this.hit(judgement);
-    this.hat(3000, 0.05, 0.09);
+    this.hat(1200, 0.28, 0.11);
   }
 
   /**
@@ -89,6 +98,6 @@ export class Sfx {
    * voice as the taps, left to ring as the reward.
    */
   holdRelease(): void {
-    this.hat(8000, 0.08, OPEN_DECAY_S);
+    this.hat(5000, 0.36, OPEN_DECAY_S);
   }
 }

@@ -286,10 +286,10 @@ export class LobbyScene implements Scene {
       );
     }
     if (key === "DIFFICULTY") {
-      // Up is the *easier* direction, matching the ↑/↓ keys.
+      // Up is the *harder* direction, matching the ↑/↓ keys.
       row.addChild(
-        this.makeArrow("▲", 212, () => this.cycleDifficulty(-1)),
-        this.makeArrow("▼", 252, () => this.cycleDifficulty(1)),
+        this.makeArrow("▲", 212, () => this.cycleDifficulty(1)),
+        this.makeArrow("▼", 252, () => this.cycleDifficulty(-1)),
       );
     }
     if (key === "ROOM") {
@@ -644,14 +644,14 @@ export class LobbyScene implements Scene {
       this.cycleCharacter(1);
       return;
     }
-    // Up is the *easier* direction: the list reads easiest-first, and a row
-    // of difficulties climbing away from you is the wrong mental model.
+    // Up is the *harder* direction: the list reads easiest-first, but "up"
+    // reading as "more" is the stronger expectation.
     if (e.key === "ArrowUp" || e.key === "Up") {
-      this.cycleDifficulty(-1);
+      this.cycleDifficulty(1);
       return;
     }
     if (e.key === "ArrowDown" || e.key === "Down") {
-      this.cycleDifficulty(1);
+      this.cycleDifficulty(-1);
       return;
     }
     // Track select: the arrows are spoken for, so the brackets step the song.
