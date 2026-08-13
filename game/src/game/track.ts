@@ -1,4 +1,11 @@
-import { Container, Graphics, GraphicsContext, Text, Ticker } from "pixi.js";
+import {
+  Container,
+  FillGradient,
+  Graphics,
+  GraphicsContext,
+  Text,
+  Ticker,
+} from "pixi.js";
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { LANE_KEY_LABELS } from "../core/input";
 import type { JudgedNote, Judgement } from "./judge";
@@ -60,6 +67,13 @@ interface Burst {
   intensity: number;
 }
 
+// Hit glow — a purple gradient sheet rising from the beat line on every
+// keyed note, strongest at the line and transparent at its top edge.
+// Capped at half the screen height by design.
+const GLOW_HEIGHT = VIRTUAL_HEIGHT * 0.5;
+const GLOW_DURATION_MS = 420;
+const GLOW_PEAK_ALPHA = 0.9;
+
 function laneCenterX(lane: number): number {
   return TRACK_LEFT + (lane + 0.5) * LANE_WIDTH;
 }
@@ -79,6 +93,9 @@ export class Track {
   private readonly burstPool: Graphics[] = [];
   private readonly bursts: Burst[] = [];
   private readonly active = new Map<JudgedNote, Graphics>();
+  private readonly glow: Graphics;
+  /** 0..1; jumps on a hit, decays linearly, drives the glow alpha. */
+  private glowStrength = 0;
   /** Index into the (sorted) note list of the next note to spawn. */
   private spawnCursor = 0;
 
@@ -94,7 +111,24 @@ export class Track {
     g.rect(TRACK_LEFT - 2, 0, 2, VIRTUAL_HEIGHT).fill(0x3a2f5c);
     g.rect(TRACK_LEFT + TRACK_WIDTH, 0, 2, VIRTUAL_HEIGHT).fill(0x3a2f5c);
     g.rect(TRACK_LEFT, HIT_Y, TRACK_WIDTH, 4).fill(0xbfb3e0);
-    this.view.addChild(g, this.notesLayer, this.burstLayer);
+
+    // Amethyst, fading to nothing at the top; alpha is animated per hit.
+    const glowGradient = new FillGradient({
+      start: { x: 0, y: 1 },
+      end: { x: 0, y: 0 },
+      colorStops: [
+        { offset: 0, color: "rgba(150, 120, 200, 0.55)" },
+        { offset: 1, color: "rgba(150, 120, 200, 0)" },
+      ],
+    });
+    this.glow = new Graphics()
+      .rect(TRACK_LEFT, HIT_Y - GLOW_HEIGHT, TRACK_WIDTH, GLOW_HEIGHT)
+      .fill(glowGradient);
+    this.glow.blendMode = "add";
+    this.glow.alpha = 0;
+
+    // Glow sits behind notes so rising light never obscures gameplay.
+    this.view.addChild(g, this.glow, this.notesLayer, this.burstLayer);
 
     for (let lane = 0; lane < 4; lane++) {
       const cx = laneCenterX(lane);
@@ -138,6 +172,9 @@ export class Track {
     sprite.alpha = intensity;
     sprite.visible = true;
     this.bursts.push({ sprite, ageMs: 0, intensity });
+
+    this.glowStrength = Math.max(this.glowStrength, intensity);
+    this.glow.alpha = GLOW_PEAK_ALPHA * this.glowStrength ** 2;
   }
 
   update(ticker: Ticker): void {
@@ -146,6 +183,15 @@ export class Track {
         RECEPTOR_IDLE_ALPHA,
         receptor.alpha - ticker.deltaMS / 200,
       );
+    }
+
+    if (this.glowStrength > 0) {
+      this.glowStrength = Math.max(
+        0,
+        this.glowStrength - ticker.deltaMS / GLOW_DURATION_MS,
+      );
+      // Squared: bright arrival, gentle tail.
+      this.glow.alpha = GLOW_PEAK_ALPHA * this.glowStrength ** 2;
     }
 
     for (let i = this.bursts.length - 1; i >= 0; i--) {
