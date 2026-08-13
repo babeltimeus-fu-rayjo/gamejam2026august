@@ -148,6 +148,7 @@ src/
     score.ts           score/combo/accuracy state machine
   ui/hud.ts            BitmapText score/combo, judgement popup animations
   art/stage.ts         full-screen layer behind the track: parallax, combo-reactive character
+  art/avatar.ts        (done) side-gutter reactive player avatar; characters.ts pose defs, reactions.ts judgement→pose logic
   net/                 (stretch) room.ts, protocol.ts
 chart-editor/          standalone charting app (BPM/onset detection, tap+hold editing)
 public/songs/<id>/     audio file + chart.json + cover.png

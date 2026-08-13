@@ -1,4 +1,6 @@
 import { Application, Container, Graphics } from "pixi.js";
+import { Avatar } from "./art/avatar";
+import { TEAL } from "./art/characters";
 import {
   BACKDROP_COLOR,
   LETTERBOX_COLOR,
@@ -22,6 +24,10 @@ import type { PlayResults } from "./game/score";
     antialias: true,
   });
   document.getElementById("pixi-container")!.appendChild(app.canvas);
+
+  // Warm the pose textures while the player is on the title screen; the
+  // Assets cache persists across scene switches, so this happens once.
+  void Avatar.preload(TEAL);
 
   // Everything renders inside `root`, which is designed at 1280x720 virtual
   // coordinates and uniformly scaled to fit the window (letterboxed).
