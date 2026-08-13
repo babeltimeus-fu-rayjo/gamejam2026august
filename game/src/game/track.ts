@@ -35,7 +35,7 @@ export function trackLeftAt(y: number): number {
 }
 
 /** x of the boundary between lane `edge - 1` and lane `edge` at height y. */
-function laneEdgeXAt(edge: number, y: number): number {
+export function laneEdgeXAt(edge: number, y: number): number {
   return trackLeftAt(y) + (edge / 4) * trackWidthAt(y);
 }
 

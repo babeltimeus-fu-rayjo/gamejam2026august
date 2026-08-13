@@ -16,7 +16,8 @@ const PANEL_WIDTH = 300;
 const PANEL_HEIGHT = 92;
 const MARGIN = 24;
 const PANEL_X = VIRTUAL_WIDTH - MARGIN - PANEL_WIDTH;
-const PANEL_Y = 20;
+// Below the life gauge (hud.ts, y 20–58) — same corner, no overlap.
+const PANEL_Y = 70;
 const PAD = 14;
 
 /** Roughly two-thirds the player HUD's type sizes — present, not competing. */

@@ -5,9 +5,11 @@ import { Stage } from "./art/stage";
 import {
   BACKDROP_COLOR,
   LETTERBOX_COLOR,
+  SONGS,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
   type GameMode,
+  type SongDef,
 } from "./config";
 import { DIFFICULTIES, type DifficultyId } from "./core/difficulty";
 import { SceneManager } from "./game/scenes";
@@ -83,6 +85,8 @@ import { preloadVideoBackdrop } from "./game/video-backdrop";
   let character: CharacterDef = TEAL;
   // Difficulty picked in the lobby (↑/↓), likewise remembered.
   let difficulty: DifficultyId = "normal";
+  // Track picked in the lobby ([/] or the row's arrows), likewise remembered.
+  let song: SongDef = SONGS[0];
   const toLobby = (): void =>
     scenes.switchTo(
       new LobbyScene(
@@ -91,6 +95,8 @@ import { preloadVideoBackdrop } from "./game/video-backdrop";
         (c) => (character = c),
         difficulty,
         (d) => (difficulty = d),
+        song,
+        (s) => (song = s),
         toGameplay,
         toTitle,
       ),
@@ -105,6 +111,7 @@ import { preloadVideoBackdrop } from "./game/video-backdrop";
   const toGameplay = (): void =>
     scenes.switchTo(
       new GameplayScene(
+        song,
         DIFFICULTIES[difficulty],
         toResults,
         toLobby,

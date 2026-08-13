@@ -48,6 +48,8 @@ export interface RemotePlayer {
   chartHash: string | null;
   /** Their chosen difficulty; null until their hello lands. May differ. */
   difficulty: string | null;
+  /** Their avatar character id; null until their hello lands. */
+  character: string | null;
   combo: number;
   score: number;
   finish: FinishMsg | null;
@@ -75,6 +77,8 @@ export interface RoomIdentity {
   chartHash: string;
   /** Per-player, not part of the agreement — see HelloMsg.difficulty. */
   difficulty: string;
+  /** Avatar character id — see HelloMsg.character. */
+  character: string;
 }
 
 /**
@@ -173,6 +177,7 @@ export class NetRoom {
         armed: false,
         chartHash: null,
         difficulty: null,
+        character: null,
         combo: 0,
         score: 0,
         finish: null,
@@ -214,6 +219,7 @@ export class NetRoom {
       chartId: this.identity.chartId,
       chartHash: this.identity.chartHash,
       difficulty: this.identity.difficulty,
+      character: this.identity.character,
       ready: this.localReady,
     };
   }
@@ -231,6 +237,7 @@ export class NetRoom {
       ready: msg.ready,
       chartHash: msg.chartHash,
       difficulty: msg.difficulty,
+      character: msg.character,
     });
     if (msg.chartHash !== this.identity.chartHash) {
       this.bus.emit("mismatch", { peerId, theirs: msg.chartHash });
@@ -275,6 +282,38 @@ export class NetRoom {
   setDifficulty(difficulty: string): void {
     if (difficulty === this.identity.difficulty) return;
     this.identity = { ...this.identity, difficulty };
+    this.sendHello(this.helloMsg());
+    this.emitPeers();
+  }
+
+  /**
+   * Announce a track re-pick. Unlike difficulty, the chart *is* the
+   * agreement: allReady requires every peer's chartHash to match ours, so
+   * changing tracks blocks the start until the peer picks the same one.
+   * Peers re-run their mismatch check on the fresh hello; we re-run ours
+   * here against what they last announced.
+   */
+  setChart(chartId: string, chartHash: string): void {
+    if (
+      chartId === this.identity.chartId &&
+      chartHash === this.identity.chartHash
+    ) {
+      return;
+    }
+    this.identity = { ...this.identity, chartId, chartHash };
+    this.sendHello(this.helloMsg());
+    for (const p of this.peers) {
+      if (p.chartHash !== null && p.chartHash !== chartHash) {
+        this.bus.emit("mismatch", { peerId: p.id, theirs: p.chartHash });
+      }
+    }
+    this.emitPeers();
+  }
+
+  /** Announce an avatar re-pick; same non-agreement rules as difficulty. */
+  setCharacter(character: string): void {
+    if (character === this.identity.character) return;
+    this.identity = { ...this.identity, character };
     this.sendHello(this.helloMsg());
     this.emitPeers();
   }

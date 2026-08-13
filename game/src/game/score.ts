@@ -10,9 +10,9 @@ export const POINTS: Readonly<Record<Exclude<Judgement, "miss">, number>> = {
 
 // Life gauge — misses drain it, hits nurse it back a little. A long run
 // of misses empties the gauge and fails the song (gameplay watches
-// `dead`); recovery is slow enough that survival stays earned.
+// `dead`); recovery is slow enough that survival stays earned. How much
+// a miss drains is the difficulty's call (`lifeDrainMiss`; 0 = gauge off).
 export const MAX_LIFE = 1000;
-const LIFE_DRAIN_MISS = 30;
 const LIFE_GAIN: Readonly<Record<Exclude<Judgement, "miss">, number>> = {
   perfect: 9,
   great: 6,
@@ -74,14 +74,19 @@ export class ScoreState {
    * @param totalNotes judgeable units in the chart — taps count once, holds
    * twice (`noteWeight` in judge.ts). A hold's tail is worth full points, so
    * the accuracy denominator has to include it or a clean run exceeds 100 %.
+   * @param lifeDrainMiss life lost per miss (difficulty dial); 0 disables
+   * the gauge — life never moves, so `dead` can never fire.
    */
-  constructor(readonly totalNotes: number) {}
+  constructor(
+    readonly totalNotes: number,
+    private readonly lifeDrainMiss = 25,
+  ) {}
 
   apply(judgement: Judgement): void {
     this.counts[judgement] += 1;
     if (judgement === "miss") {
       this.combo = 0;
-      this.life = Math.max(0, this.life - LIFE_DRAIN_MISS);
+      this.life = Math.max(0, this.life - this.lifeDrainMiss);
       return;
     }
     this.score += POINTS[judgement];
@@ -90,9 +95,14 @@ export class ScoreState {
     if (this.combo > this.maxCombo) this.maxCombo = this.combo;
   }
 
+  /** False when the difficulty turned the gauge off (drain of 0). */
+  get lifeEnabled(): boolean {
+    return this.lifeDrainMiss > 0;
+  }
+
   /** True once the gauge is empty; the run fails at this point. */
   get dead(): boolean {
-    return this.life <= 0;
+    return this.lifeEnabled && this.life <= 0;
   }
 
   get judgedCount(): number {

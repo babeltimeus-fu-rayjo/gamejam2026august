@@ -16,6 +16,12 @@ export class NumberRoll {
     private readonly text: Text,
     /** Turns the running value into what the player reads. */
     private readonly format: (value: number) => string,
+    /**
+     * Widest the readout may render, in the text's own coordinates. Scores and
+     * combos are unbounded but the panel behind them is not, so a long figure
+     * is scaled down rather than allowed past its slab. Omit for no limit.
+     */
+    private readonly maxWidth?: number,
   ) {}
 
   /** Count from whatever is on screen now up to `value`. */
@@ -54,6 +60,14 @@ export class NumberRoll {
 
   private write(value: number): void {
     const next = this.format(value);
-    if (this.text.text !== next) this.text.text = next;
+    if (this.text.text === next) return;
+    this.text.text = next;
+    if (this.maxWidth === undefined) return;
+    // Measure unscaled, then shrink to fit: scaling the rendered text beats
+    // wrapping, since a stat line only reads as one line.
+    this.text.scale.set(1);
+    if (this.text.width > this.maxWidth) {
+      this.text.scale.set(this.maxWidth / this.text.width);
+    }
   }
 }

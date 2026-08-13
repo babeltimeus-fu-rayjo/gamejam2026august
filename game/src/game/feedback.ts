@@ -10,7 +10,10 @@ import type { Judgement } from "./judge";
 
 export type FeedbackTier = Judgement | "extraordinary";
 
-/** Combo from which every hit reads EXTRAORDINARY; a miss resets it. */
+/**
+ * Default combo from which every hit reads EXTRAORDINARY; a miss resets it.
+ * Characters may override the threshold (art/characters.ts CharacterPerk).
+ */
 export const EXTRAORDINARY_COMBO = 10;
 
 export const TIER_COLOR: Readonly<Record<FeedbackTier, number>> = {
@@ -23,8 +26,12 @@ export const TIER_COLOR: Readonly<Record<FeedbackTier, number>> = {
   miss: 0xff4d5e,
 };
 
-export function tierFor(judgement: Judgement, combo: number): FeedbackTier {
-  return judgement !== "miss" && combo >= EXTRAORDINARY_COMBO
+export function tierFor(
+  judgement: Judgement,
+  combo: number,
+  threshold: number = EXTRAORDINARY_COMBO,
+): FeedbackTier {
+  return judgement !== "miss" && combo >= threshold
     ? "extraordinary"
     : judgement;
 }

@@ -2,6 +2,7 @@ import {
   Assets,
   Container,
   Graphics,
+  Rectangle,
   Sprite,
   Text,
   Texture,
@@ -64,6 +65,8 @@ const CARD_WIDTH = 300;
 const CARD_HEIGHT = 108;
 const CARD_GAP = 32;
 const CARD_TOP = 300;
+/** Breathing room between a panel's edge and the text inside it. */
+const CARD_PADDING = 24;
 const CENTER_X = VIRTUAL_WIDTH / 2;
 const STAMP_Y = 168;
 const DIFFICULTY_Y = 242;
@@ -166,6 +169,14 @@ export class ResultsScene implements Scene {
     this.ring.blendMode = "add";
     this.ring.visible = false;
 
+    // The whole screen is the "continue" button — there's nothing else to tap
+    // here, and it's the touch twin of the Enter key.
+    const tapCatcher = new Container();
+    tapCatcher.eventMode = "static";
+    tapCatcher.hitArea = new Rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+    tapCatcher.on("pointertap", () => this.onDone());
+    this.view.addChild(tapCatcher);
+
     this.reveal.alpha = 0;
     this.view.addChild(this.reveal);
 
@@ -244,7 +255,10 @@ export class ResultsScene implements Scene {
         CARD_TOP,
       );
       this.reveal.addChild(card);
-      this.enroll(new NumberRoll(valueText, format), value);
+      this.enroll(
+        new NumberRoll(valueText, format, CARD_WIDTH - CARD_PADDING * 2),
+        value,
+      );
     });
 
     this.reveal.addChild(this.tally(TALLY_Y));
@@ -407,7 +421,10 @@ export class ResultsScene implements Scene {
     this.reveal.addChild(sprite);
   }
 
-  /** "press Enter for lobby" on a menu panel, with Enter drawn as a key cap. */
+  /**
+   * "press Enter or tap for lobby" on a menu panel, with Enter drawn as a key
+   * cap. Tap is named because the whole screen is a continue button on touch.
+   */
   private buildHint(y: number): Container {
     const wrap = new Container();
     const pre = new Text({
@@ -424,7 +441,7 @@ export class ResultsScene implements Scene {
       }),
     });
     const post = new Text({
-      text: "for lobby",
+      text: "or tap for lobby",
       style: flatStyle(PANEL_VIOLET, 21, 3),
     });
     for (const t of [pre, key, post]) t.anchor.set(0, 0.5);
@@ -784,6 +801,8 @@ function neonRule(
  */
 class ColumnStats extends Container {
   static readonly WIDTH = 340;
+  /** The value's half of a row: the caption owns the left of the slab. */
+  static readonly VALUE_MAX_WIDTH = 170;
   private static readonly LABELS = ["SCORE", "ACCURACY", "MAX COMBO"];
   private static readonly ROW_HEIGHT = 46;
   private static readonly PAD = 22;
@@ -823,7 +842,13 @@ class ColumnStats extends Container {
       value.anchor.set(1, 0.5);
       value.position.set(ColumnStats.WIDTH - ColumnStats.PAD - 10, y);
 
-      this.rolls.push(new NumberRoll(value, i === 1 ? percent : wholeNumber));
+      this.rolls.push(
+        new NumberRoll(
+          value,
+          i === 1 ? percent : wholeNumber,
+          ColumnStats.VALUE_MAX_WIDTH,
+        ),
+      );
       this.addChild(caption, value);
       if (i > 0) {
         this.addChild(

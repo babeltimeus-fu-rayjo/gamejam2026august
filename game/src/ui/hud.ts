@@ -102,6 +102,7 @@ export class Hud {
   private readonly vignette: Container;
   private readonly lifeValue: Text;
   private readonly lifeFill: Graphics;
+  private readonly lifeGroup = new Container();
   private lifeFraction = 1;
   private lifePulseMs = 0;
   private popupAgeMs = Infinity;
@@ -111,7 +112,10 @@ export class Hud {
   private vignetteOn = false;
   private vignettePhaseMs = 0;
 
-  constructor(bus: Emitter<GameEvents>) {
+  constructor(
+    bus: Emitter<GameEvents>,
+    opts: { showLife?: boolean; accent?: number } = {},
+  ) {
     this.scoreText = new Text({
       text: "SCORE 0",
       style: neonStyle(0x9678c8, {
@@ -131,18 +135,23 @@ export class Hud {
     // pause / lobby buttons.
     this.scoreText.position.set(24, 80);
 
+    // The combo readout is the player-owned chrome, so it carries the
+    // character's accent when one is set; without it, the defaults below
+    // are exactly the original purples.
+    const accent = opts.accent;
+
     // Big, airy digits: a light face so the count reads as a glow number,
     // not a wall of ink. Helvetica Neue carries real thin weights on
     // macOS; elsewhere it falls back to regular Arial.
     this.comboText = new Text({
       text: "",
-      style: neonStyle(0xb87ae0, {
+      style: neonStyle(accent ?? 0xb87ae0, {
         fontFamily: "Helvetica Neue, Arial",
         fontSize: 112,
         fontWeight: "200",
-        stroke: { color: 0xb87ae0, width: 2 },
+        stroke: { color: accent ?? 0xb87ae0, width: 2 },
         dropShadow: {
-          color: 0xa06ae0,
+          color: accent ?? 0xa06ae0,
           blur: 24,
           distance: 0,
           angle: 0,
@@ -155,13 +164,13 @@ export class Hud {
 
     this.comboLabel = new Text({
       text: "COMBO",
-      style: neonStyle(0x9f8fd8, {
+      style: neonStyle(accent ?? 0x9f8fd8, {
         fontSize: 20,
         fontWeight: "700",
         letterSpacing: 3,
-        stroke: { color: 0x9f8fd8, width: 1 },
+        stroke: { color: accent ?? 0x9f8fd8, width: 1 },
         dropShadow: {
-          color: 0x9f8fd8,
+          color: accent ?? 0x9f8fd8,
           blur: 8,
           distance: 0,
           angle: 0,
@@ -222,6 +231,9 @@ export class Hud {
       .stroke({ width: 1.5, color: LIFE_PINK, alpha: 0.5 });
     this.lifeFill = new Graphics();
     this.redrawLife();
+    // EASY runs without the gauge; the group hides as one unit.
+    this.lifeGroup.addChild(lifeLabel, this.lifeValue, lifeBack, this.lifeFill);
+    this.lifeGroup.visible = opts.showLife !== false;
 
     // Four inward-fading strips; overlapping corners stack brighter,
     // which is exactly the vignette look. Additive so it reads as light.
@@ -244,10 +256,7 @@ export class Hud {
       this.comboText,
       this.comboLabel,
       this.popup,
-      lifeLabel,
-      this.lifeValue,
-      lifeBack,
-      this.lifeFill,
+      this.lifeGroup,
     );
 
     bus.on("judgement", ({ tier, combo, score, life }) => {
@@ -285,7 +294,11 @@ export class Hud {
 
   update(ticker: Ticker): void {
     // Low life: the fill blinks urgency, full alpha otherwise.
-    if (this.lifeFraction > 0 && this.lifeFraction < LIFE_LOW_FRACTION) {
+    if (
+      this.lifeGroup.visible &&
+      this.lifeFraction > 0 &&
+      this.lifeFraction < LIFE_LOW_FRACTION
+    ) {
       this.lifePulseMs += ticker.deltaMS;
       this.lifeFill.alpha = 0.65 + 0.35 * Math.sin(this.lifePulseMs / 90);
     } else {
