@@ -9,11 +9,28 @@ export const VIRTUAL_HEIGHT = 720;
 export type GameMode = "single" | "battle";
 
 /**
- * The only song until lobby track select lands (M5). Lives here so the
- * lobby can hash its chart for multiplayer without importing gameplay.
+ * The playable tracks, in lobby cycling order. Lives here so the lobby can
+ * hash a chart for multiplayer without importing gameplay. Titles are
+ * duplicated from each chart.json on purpose: the TRACK row needs them
+ * before any chart has been fetched.
  */
-export const SONG_ID = "everyday-is-extraordinary";
-export const SONG_DIR = `${import.meta.env.BASE_URL}songs/${SONG_ID}/`;
+export interface SongDef {
+  /** Folder name under public/songs/. */
+  id: string;
+  title: string;
+}
+
+export const SONGS: readonly SongDef[] = [
+  { id: "everyday-is-extraordinary", title: "Everyday is extraordinary" },
+  { id: "kirakira-idol", title: "キラキラアイドル" },
+  { id: "okitsunesama", title: "おキツネさま" },
+  { id: "warm-coffee-blues", title: "Warm Coffee Blues" },
+];
+
+/** Where a song's chart.json and audio live, with the deploy base applied. */
+export function songDir(id: string): string {
+  return `${import.meta.env.BASE_URL}songs/${id}/`;
+}
 
 /** Page background (outside the virtual canvas). */
 export const LETTERBOX_COLOR = 0x0e0a1a;

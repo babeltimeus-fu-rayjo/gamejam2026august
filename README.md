@@ -1,4 +1,4 @@
-# gamejam2026august — Rhythm Game
+# gamejam2026august — Off-Beat Ordinary
 
 Browser rhythm game (Magic Tiles 3 / DDR style): 4 vertical lanes, notes fall top-to-bottom into a hit line near the bottom, played with **D F J K**. PixiJS v8 + TypeScript + Vite.
 

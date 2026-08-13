@@ -2,7 +2,12 @@ import { Container, Graphics, Text, Ticker } from "pixi.js";
 import { Avatar } from "../art/avatar";
 import { CHARACTERS, type CharacterDef } from "../art/characters";
 import { Stage } from "../art/stage";
-import { SONG_DIR, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
+import {
+  songDir,
+  VIRTUAL_HEIGHT,
+  VIRTUAL_WIDTH,
+  type SongDef,
+} from "../config";
 import { parseChart, type Chart } from "../core/beatmap";
 import { applyDifficulty, type Difficulty } from "../core/difficulty";
 import { stopMenuBgm } from "../core/bgm";
@@ -124,6 +129,7 @@ export class GameplayScene implements Scene {
   private shakeAgeMs = SHAKE_DURATION_MS;
 
   constructor(
+    private readonly song: SongDef,
     private readonly difficulty: Difficulty,
     private readonly onFinish: (results: PlayResults) => void,
     private readonly onQuit: () => void,
@@ -321,7 +327,8 @@ export class GameplayScene implements Scene {
   }
 
   private async loadSong(): Promise<void> {
-    const res = await fetch(`${SONG_DIR}chart.json`);
+    const dir = songDir(this.song.id);
+    const res = await fetch(`${dir}chart.json`);
     if (!res.ok) throw new Error(`chart fetch failed: ${res.status}`);
     const chart = applyDifficulty(
       parseChart(await res.json()),
@@ -346,7 +353,7 @@ export class GameplayScene implements Scene {
     );
     this.songTitle.text = `${chart.song.title}   ·   ${this.difficulty.label}`;
     this.stage.setBeat(chart.bpm, chart.offset);
-    await this.clock.load(SONG_DIR + chart.song.audioFile);
+    await this.clock.load(dir + chart.song.audioFile);
   }
 
   /** Score one half of one note and tell the HUD, avatar, and track about it. */

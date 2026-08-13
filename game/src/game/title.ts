@@ -36,10 +36,12 @@ export class TitleScene implements Scene {
 
   constructor(private readonly onSelect: (mode: GameMode) => void) {
     const title = new Text({
-      text: "RHYTHM GAME",
+      text: "OFF-BEAT ORDINARY",
       style: {
         fontFamily: "Arial",
-        fontSize: 96,
+        // 96 fit the old two-word name; the longer title needs the smaller
+        // size to keep a margin inside the 1280 virtual width.
+        fontSize: 76,
         fontWeight: "900",
         letterSpacing: 8,
         fill: 0xffffff,

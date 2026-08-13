@@ -286,6 +286,30 @@ export class NetRoom {
     this.emitPeers();
   }
 
+  /**
+   * Announce a track re-pick. Unlike difficulty, the chart *is* the
+   * agreement: allReady requires every peer's chartHash to match ours, so
+   * changing tracks blocks the start until the peer picks the same one.
+   * Peers re-run their mismatch check on the fresh hello; we re-run ours
+   * here against what they last announced.
+   */
+  setChart(chartId: string, chartHash: string): void {
+    if (
+      chartId === this.identity.chartId &&
+      chartHash === this.identity.chartHash
+    ) {
+      return;
+    }
+    this.identity = { ...this.identity, chartId, chartHash };
+    this.sendHello(this.helloMsg());
+    for (const p of this.peers) {
+      if (p.chartHash !== null && p.chartHash !== chartHash) {
+        this.bus.emit("mismatch", { peerId: p.id, theirs: p.chartHash });
+      }
+    }
+    this.emitPeers();
+  }
+
   /** Announce an avatar re-pick; same non-agreement rules as difficulty. */
   setCharacter(character: string): void {
     if (character === this.identity.character) return;
