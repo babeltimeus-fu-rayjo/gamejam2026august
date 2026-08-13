@@ -1,20 +1,17 @@
 import { Container, Graphics, Text, Ticker } from "pixi.js";
 import { Avatar } from "../art/avatar";
 import type { CharacterDef } from "../art/characters";
-import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
+import { SONG_DIR, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { parseChart, type Chart } from "../core/beatmap";
+import { applyDifficulty, type Difficulty } from "../core/difficulty";
 import { AudioClock } from "../core/clock";
 import { Emitter } from "../core/events";
 import { LaneInput } from "../core/input";
 import { Hud } from "../ui/hud";
-import { Judge, type JudgedNote } from "./judge";
+import { Judge, noteWeight, type JudgedNote, type Resolution } from "./judge";
 import { ScoreState, type GameEvents, type PlayResults } from "./score";
 import { Track } from "./track";
 import type { Scene } from "./scenes";
-
-// Lobby track select lands in M5; until then gameplay loads this song.
-const SONG_ID = "everyday-is-extraordinary";
-const SONG_DIR = `${import.meta.env.BASE_URL}songs/${SONG_ID}/`;
 
 /** Grace period after the last judged note before results. */
 const OUTRO_S = 1.5;
@@ -27,22 +24,26 @@ const BUTTON_GAP = 12;
 const BUTTON_IDLE_ALPHA = 0.85;
 
 /**
- * M2 gameplay: loads chart.json + audio, plays all four lanes with pooled
- * note sprites, applies scoring through the event bus (HUD subscribes),
- * and hands PlayResults to the results scene. Holds judge as taps until
- * the hold mechanic lands. Enter bails out early with partial results.
+ * Gameplay: loads chart.json + audio, derives the chosen difficulty, plays
+ * all four lanes with pooled note sprites, applies scoring through the event
+ * bus (HUD subscribes), and hands PlayResults to the results scene. Taps are
+ * judged on keydown, holds on keydown *and* keyup. Enter bails out early
+ * with partial results.
  */
 export class GameplayScene implements Scene {
   readonly view = new Container();
 
   private readonly clock = new AudioClock();
   private readonly bus = new Emitter<GameEvents>();
-  private readonly track = new Track();
+  private readonly track: Track;
   private readonly hud = new Hud(this.bus);
   // Player sits right of the track; a future multiplayer opponent takes
   // side: "left" with its own bus (see PLAN.md M4/M6).
   private readonly avatar: Avatar;
-  private readonly input = new LaneInput((lane) => this.onLane(lane));
+  private readonly input = new LaneInput({
+    onPress: (lane) => this.onPress(lane),
+    onRelease: (lane) => this.onRelease(lane),
+  });
   private readonly status: Text;
 
   private readonly pauseLabel: Text;
@@ -57,6 +58,7 @@ export class GameplayScene implements Scene {
   private paused = false;
 
   constructor(
+    private readonly difficulty: Difficulty,
     private readonly onFinish: (results: PlayResults) => void,
     private readonly onQuit: () => void,
     character: CharacterDef,
@@ -66,6 +68,11 @@ export class GameplayScene implements Scene {
       character,
       bus: this.bus,
     });
+    // Scroll speed is the difficulty's headline dial, so the track can only
+    // be built once the difficulty is in hand — hence the constructor body
+    // rather than a field initializer.
+    this.track = new Track(difficulty.scrollSpeed);
+
     // Placeholder art layer: fills the screen BEHIND the semi-transparent
     // track (real reactive stage lands in M4).
     const art = new Graphics()
@@ -174,6 +181,9 @@ export class GameplayScene implements Scene {
     this.pauseOverlay.visible = this.paused;
     this.pauseLabel.text = this.paused ? "RESUME" : "PAUSE";
     if (this.paused) {
+      // Lift held keys before freezing: a hold left live across a pause
+      // would complete itself the instant the clock jumps past its end.
+      this.input.releaseAll();
       void this.clock.pause();
     } else {
       void this.clock.resume();
@@ -190,37 +200,58 @@ export class GameplayScene implements Scene {
   private async loadSong(): Promise<void> {
     const res = await fetch(`${SONG_DIR}chart.json`);
     if (!res.ok) throw new Error(`chart fetch failed: ${res.status}`);
-    const chart = parseChart(await res.json());
+    const chart = applyDifficulty(
+      parseChart(await res.json()),
+      this.difficulty,
+    );
     this.chart = chart;
     this.notes = chart.notes.map((n) => ({
       t: n.t,
       lane: n.lane,
+      d: n.type === "hold" ? (n.d ?? 0) : 0,
       judgement: null,
+      tail: null,
+      holding: false,
     }));
-    this.lastNoteT = this.notes.length
-      ? this.notes[this.notes.length - 1].t
-      : 0;
-    this.judge = new Judge(this.notes);
-    this.score = new ScoreState(this.notes.length);
+    // The song is over when the last thing to judge has passed, and a hold's
+    // tail outlives its head.
+    this.lastNoteT = this.notes.reduce((max, n) => Math.max(max, n.t + n.d), 0);
+    this.judge = new Judge(this.notes, this.difficulty.windowScale);
+    this.score = new ScoreState(
+      this.notes.reduce((sum, n) => sum + noteWeight(n), 0),
+    );
     await this.clock.load(SONG_DIR + chart.song.audioFile);
   }
 
-  private onLane(lane: number): void {
+  /** Score one half of one note and tell the HUD, avatar, and track about it. */
+  private applyResolution(r: Resolution): void {
+    if (!this.score) return;
+    if (r.judgement !== "miss") this.track.hitBurst(r.note.lane, r.judgement);
+    this.score.apply(r.judgement);
+    this.bus.emit("judgement", {
+      judgement: r.judgement,
+      lane: r.note.lane,
+      deltaMs: r.delta === null ? null : r.delta * 1000,
+      combo: this.score.combo,
+      score: this.score.score,
+    });
+  }
+
+  private onPress(lane: number): void {
     if (this.paused) return;
     void this.clock.resume();
     this.track.flash(lane);
     if (!this.judge || !this.score || !this.clock.started) return;
     const hit = this.judge.tryHit(lane, this.clock.songTime());
     if (!hit) return; // ghost tap — no penalty
-    this.track.hitBurst(lane, hit.judgement);
-    this.score.apply(hit.judgement);
-    this.bus.emit("judgement", {
-      judgement: hit.judgement,
-      lane,
-      deltaMs: hit.delta * 1000,
-      combo: this.score.combo,
-      score: this.score.score,
-    });
+    this.applyResolution(hit);
+  }
+
+  /** Only holds care: a release with no live hold under it resolves nothing. */
+  private onRelease(lane: number): void {
+    if (!this.judge || !this.score || !this.clock.started) return;
+    const tail = this.judge.release(lane, this.clock.songTime());
+    if (tail) this.applyResolution(tail);
   }
 
   private readonly onAnyKey = (e: KeyboardEvent): void => {
@@ -280,26 +311,19 @@ export class GameplayScene implements Scene {
     if (!this.clock.started) {
       this.clock.start(2);
       this.setStatus(
-        `${this.chart.song.title} — D F J K to play, Enter to bail`,
+        `${this.chart.song.title} · ${this.difficulty.label} — D F J K, hold the long notes, Enter to bail`,
       );
     }
 
     const t = this.clock.songTime();
 
-    for (const missed of this.judge.sweepMisses(t)) {
-      this.score.apply("miss");
-      this.bus.emit("judgement", {
-        judgement: "miss",
-        lane: missed.lane,
-        deltaMs: null,
-        combo: this.score.combo,
-        score: this.score.score,
-      });
+    for (const resolution of this.judge.sweep(t)) {
+      this.applyResolution(resolution);
     }
 
     this.track.sync(this.notes, t);
 
-    const allJudged = this.score.judgedCount === this.notes.length;
+    const allJudged = this.score.judgedCount === this.score.totalNotes;
     const pastEnd =
       t > this.lastNoteT + OUTRO_S || t > this.chart.song.duration + 1;
     if (this.notes.length > 0 && allJudged && pastEnd) this.finish();

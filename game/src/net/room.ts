@@ -33,6 +33,8 @@ export interface RemotePlayer {
   ready: boolean;
   /** null until their hello lands. */
   chartHash: string | null;
+  /** Their chosen difficulty; null until their hello lands. May differ. */
+  difficulty: string | null;
   combo: number;
   score: number;
   finish: FinishMsg | null;
@@ -56,6 +58,8 @@ export interface RoomIdentity {
   name: string;
   chartId: string;
   chartHash: string;
+  /** Per-player, not part of the agreement — see HelloMsg.difficulty. */
+  difficulty: string;
 }
 
 /**
@@ -81,7 +85,7 @@ export class NetRoom {
 
   constructor(
     readonly code: string,
-    private readonly identity: RoomIdentity,
+    private identity: RoomIdentity,
   ) {
     this.room = joinRoom({ appId: APP_ID }, code, {
       onJoinError: ({ error }) => {
@@ -138,6 +142,7 @@ export class NetRoom {
         name: peerId.slice(0, 4),
         ready: false,
         chartHash: null,
+        difficulty: null,
         combo: 0,
         score: 0,
         finish: null,
@@ -168,6 +173,7 @@ export class NetRoom {
       name: this.identity.name,
       chartId: this.identity.chartId,
       chartHash: this.identity.chartHash,
+      difficulty: this.identity.difficulty,
       ready: this.localReady,
     };
   }
@@ -184,6 +190,7 @@ export class NetRoom {
       name: msg.name,
       ready: msg.ready,
       chartHash: msg.chartHash,
+      difficulty: msg.difficulty,
     });
     if (msg.chartHash !== this.identity.chartHash) {
       this.bus.emit("mismatch", { peerId, theirs: msg.chartHash });
@@ -218,6 +225,18 @@ export class NetRoom {
       this.localReady &&
       peers.every((p) => p.ready && p.chartHash === this.identity.chartHash)
     );
+  }
+
+  /**
+   * Announce a difficulty re-pick. Ready is deliberately *not* cleared: the
+   * choice is ours alone and changing it doesn't alter what the peer agreed
+   * to play.
+   */
+  setDifficulty(difficulty: string): void {
+    if (difficulty === this.identity.difficulty) return;
+    this.identity = { ...this.identity, difficulty };
+    this.sendHello(this.helloMsg());
+    this.emitPeers();
   }
 
   setReady(ready: boolean): void {

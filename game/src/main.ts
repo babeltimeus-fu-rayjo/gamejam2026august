@@ -8,6 +8,7 @@ import {
   VIRTUAL_WIDTH,
   type GameMode,
 } from "./config";
+import { DIFFICULTIES, type DifficultyId } from "./core/difficulty";
 import { SceneManager } from "./game/scenes";
 import { TitleScene } from "./game/title";
 import { LobbyScene } from "./game/lobby";
@@ -64,14 +65,23 @@ import type { PlayResults } from "./game/score";
   // Scene flow: title -> lobby -> gameplay -> results -> back to lobby.
   // Fresh instances per switch; wiring lives here so scenes stay ignorant
   // of each other.
-  // Picked on the title screen and remembered so results can return to the
-  // lobby in the same mode.
+  // Picked on the title screen / in the lobby and remembered so results can
+  // return to the lobby on the same mode and difficulty.
   let mode: GameMode = "single";
   // Avatar picked in the lobby (←/→) and remembered across replays.
   let character: CharacterDef = TEAL;
+  // Difficulty picked in the lobby (↑/↓), likewise remembered.
+  let difficulty: DifficultyId = "normal";
   const toLobby = (): void =>
     scenes.switchTo(
-      new LobbyScene(mode, character, (c) => (character = c), toGameplay),
+      new LobbyScene(
+        mode,
+        character,
+        (c) => (character = c),
+        difficulty,
+        (d) => (difficulty = d),
+        toGameplay,
+      ),
     );
   const toTitle = (): void =>
     scenes.switchTo(
@@ -81,9 +91,18 @@ import type { PlayResults } from "./game/score";
       }),
     );
   const toGameplay = (): void =>
-    scenes.switchTo(new GameplayScene(toResults, toLobby, character));
+    scenes.switchTo(
+      new GameplayScene(
+        DIFFICULTIES[difficulty],
+        toResults,
+        toLobby,
+        character,
+      ),
+    );
   const toResults = (results: PlayResults): void =>
-    scenes.switchTo(new ResultsScene(results, toLobby));
+    scenes.switchTo(
+      new ResultsScene(results, DIFFICULTIES[difficulty].label, toLobby),
+    );
 
   app.ticker.add((ticker) => {
     if (app.screen.width !== lastWidth || app.screen.height !== lastHeight) {

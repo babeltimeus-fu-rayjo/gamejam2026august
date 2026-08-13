@@ -14,6 +14,7 @@ export interface PlayResults {
   accuracy: number;
   grade: string;
   counts: Record<Judgement, number>;
+  /** Judgeable units, not notes: a hold counts twice (head + tail). */
   totalNotes: number;
 }
 
@@ -48,6 +49,11 @@ export class ScoreState {
     miss: 0,
   };
 
+  /**
+   * @param totalNotes judgeable units in the chart — taps count once, holds
+   * twice (`noteWeight` in judge.ts). A hold's tail is worth full points, so
+   * the accuracy denominator has to include it or a clean run exceeds 100 %.
+   */
   constructor(readonly totalNotes: number) {}
 
   apply(judgement: Judgement): void {

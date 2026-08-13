@@ -17,6 +17,7 @@ export class ResultsScene implements Scene {
 
   constructor(
     results: PlayResults,
+    difficultyLabel: string,
     private readonly onDone: () => void,
   ) {
     const grade = new Text({
@@ -50,6 +51,8 @@ export class ResultsScene implements Scene {
     const accuracyPct = (results.accuracy * 100).toFixed(1);
     this.view.addChild(
       grade,
+      // A grade means nothing without the difficulty it was earned on.
+      line(difficultyLabel, VIRTUAL_HEIGHT * 0.42, 26, 0xcfc4f2),
       line(
         `SCORE ${results.score}   ·   ACCURACY ${accuracyPct}%   ·   MAX COMBO ${results.maxCombo}`,
         VIRTUAL_HEIGHT * 0.52,

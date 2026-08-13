@@ -11,8 +11,11 @@
  */
 import type { Judgement } from "../game/judge";
 
-/** Bumped whenever a message shape changes; peers refuse to pair across it. */
-export const PROTOCOL_VERSION = 1;
+/**
+ * Bumped whenever a message shape *or* the meaning of its fields changes;
+ * peers refuse to pair across it. v2 added per-player `difficulty`.
+ */
+export const PROTOCOL_VERSION = 2;
 
 /**
  * Trystero namespaces the DataChannel by action name and caps each at 12
@@ -32,8 +35,23 @@ export type HelloMsg = {
   v: number;
   name: string;
   chartId: string;
-  /** Hash of the chart JSON — both sides must agree before starting. */
+  /**
+   * Hash of the chart JSON — both sides must agree before starting, or they
+   * are on different tracks or different builds.
+   */
   chartHash: string;
+  /**
+   * The sender's chosen difficulty. Deliberately *not* folded into
+   * `chartHash`: players pick independently, so two friends of different
+   * skill can share a room. Nothing about mirror play needs matching note
+   * lists — the wire carries judgements and totals, never notes. It only
+   * means raw score isn't comparable across a mixed room, which is why
+   * accuracy is the number the ghost HUD and results lead with.
+   *
+   * A plain string, not DifficultyId: a peer on another build may name a
+   * difficulty we don't have, and showing it beats dropping it.
+   */
+  difficulty: string;
   ready: boolean;
 };
 
@@ -74,8 +92,11 @@ export type StateMsg = {
 
 export type FinishMsg = {
   score: number;
+  /** 0..1, and the only cross-difficulty-comparable number in here. */
   accuracy: number;
   maxCombo: number;
+  /** What they played, so a mixed-room result can label both sides. */
+  difficulty: string;
 };
 
 /** Room codes: unambiguous alphabet — no I/O/0/1 to survive being read aloud. */
