@@ -200,7 +200,7 @@ export class NetRoom {
         if (this.players.size === 0 && !this.left) {
           this.bus.emit(
             "status",
-            "still alone — check the code, or try both players on one network",
+            "still alone — check the code or try one network",
           );
         }
       }, UNREACHABLE_AFTER_MS),

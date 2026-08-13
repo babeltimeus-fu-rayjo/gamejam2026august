@@ -388,6 +388,13 @@ export class LobbyScene implements Scene {
         this.render();
         break;
       }
+      case "j":
+        // Swap opponents in one keypress: joining a code leaves the current
+        // room on the way in, so there's no Esc-then-J dance.
+        this.mode = "joining";
+        this.codeBuffer = "";
+        this.render();
+        break;
       case "escape":
         void this.exitRoom();
         break;
@@ -404,7 +411,10 @@ export class LobbyScene implements Scene {
     }
     const room = activeRoom();
     if (this.mode === "room" && room) {
-      return `code ${room.code}${this.status ? ` — ${this.status}` : ""}`;
+      // Leaving has to be discoverable from inside the room: a player stuck
+      // with the wrong opponent otherwise has no on-screen way out.
+      const state = this.status ? ` — ${this.status}` : "";
+      return `code ${room.code}${state}   ·   [Esc] leave`;
     }
     if (!this.chartHashValue) return "loading chart…";
     return this.gameMode === "battle"
@@ -449,12 +459,14 @@ export class LobbyScene implements Scene {
     if (this.mode === "room") {
       // Raw score scales with note count, so say up front what a mixed room
       // is actually settled on before anyone plays for the wrong number.
+      // Both strings are kept under the ~528px value column; the switch hint
+      // yields to the ranking notice rather than overflowing beside it.
       const mixed = this.peers.some(
         (p) => p.difficulty !== null && p.difficulty !== this.difficulty,
       );
       return mixed
-        ? "[R] ready, Enter to start — mixed room, ranked on accuracy"
-        : "[R] ready, Enter to start once all ready";
+        ? "[R] ready · Enter to start — ranked on accuracy"
+        : "[R] ready · Enter to start · [J] switch room";
     }
     return this.gameMode === "battle" ? "press Enter" : "press any key";
   }

@@ -221,7 +221,9 @@ export class GameplayScene implements Scene {
     this.finished = true;
     // Send what we had: the opponent's ghost otherwise sits frozen at our
     // last hit, looking like a live player who stopped scoring.
-    if (this.score) this.relay?.finish(this.score.results());
+    if (this.score) {
+      this.relay?.finish(this.score.results(), this.difficulty.id);
+    }
     this.onQuit();
   }
 
