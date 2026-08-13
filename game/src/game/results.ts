@@ -23,9 +23,12 @@ const VERDICT_TINT = {
 } as const;
 
 /** Solo stat panel, sized like a double-height lobby row. */
-const SOLO_PANEL_WIDTH = 640;
+const SOLO_PANEL_WIDTH = 760;
 const SOLO_PANEL_HEIGHT = 130;
 const SOLO_PANEL_Y = 400;
+
+/** Breathing room between a panel's edge and the text inside it. */
+const PANEL_PADDING = 32;
 
 /** Versus: one wide slab carries both players' numbers. */
 const VS_PANEL_WIDTH = 1000;
@@ -142,6 +145,17 @@ export class ResultsScene implements Scene {
     return t;
   }
 
+  /**
+   * Keep a line inside its panel: numbers are unbounded (score, combo), the
+   * slab is not. Scaling the rendered text down beats wrapping here — the
+   * stat lines only read as one line.
+   */
+  private fit(t: Text, maxWidth: number): Text {
+    t.scale.set(1);
+    if (t.width > maxWidth) t.scale.set(maxWidth / t.width);
+    return t;
+  }
+
   /** Column-local variant of `line`, centered on `x`. */
   private column(
     text: string,
@@ -168,17 +182,23 @@ export class ResultsScene implements Scene {
       // A grade means nothing without the difficulty it was earned on.
       this.line(this.difficultyLabel, 352, 26, 0xcfc4f2),
       this.panel(SOLO_PANEL_WIDTH, SOLO_PANEL_HEIGHT, SOLO_PANEL_Y),
-      this.line(
-        `SCORE ${this.results.score}   ·   ACCURACY ${accuracyPct}%   ·   MAX COMBO ${this.results.maxCombo}`,
-        SOLO_PANEL_Y + 44,
-        28,
-        0xffffff,
+      this.fit(
+        this.line(
+          `SCORE ${this.results.score}   ·   ACCURACY ${accuracyPct}%   ·   MAX COMBO ${this.results.maxCombo}`,
+          SOLO_PANEL_Y + 44,
+          28,
+          0xffffff,
+        ),
+        SOLO_PANEL_WIDTH - PANEL_PADDING * 2,
       ),
-      this.line(
-        `perfect ${c.perfect} · great ${c.great} · good ${c.good} · miss ${c.miss}`,
-        SOLO_PANEL_Y + 92,
-        24,
-        0x9f8fd8,
+      this.fit(
+        this.line(
+          `perfect ${c.perfect} · great ${c.great} · good ${c.good} · miss ${c.miss}`,
+          SOLO_PANEL_Y + 92,
+          24,
+          0x9f8fd8,
+        ),
+        SOLO_PANEL_WIDTH - PANEL_PADDING * 2,
       ),
     );
   }
@@ -216,12 +236,15 @@ export class ResultsScene implements Scene {
       // of numbers without it invites a false comparison.
       this.column(this.difficultyLabel, leftX, 331, 20, 0xcfc4f2),
       this.gradeText(r.grade, leftX, 259, 110),
-      this.column(
-        this.statLines(r.score, r.accuracy, r.maxCombo),
-        leftX,
-        statsY,
-        24,
-        0xffffff,
+      this.fit(
+        this.column(
+          this.statLines(r.score, r.accuracy, r.maxCombo),
+          leftX,
+          statsY,
+          24,
+          0xffffff,
+        ),
+        VS_PANEL_WIDTH / 2 - PANEL_PADDING * 2,
       ),
       this.column(
         this.opponentName(),
@@ -272,6 +295,7 @@ export class ResultsScene implements Scene {
       msg.maxCombo,
     );
     this.opponentLines.style.fill = 0xffffff;
+    this.fit(this.opponentLines, VS_PANEL_WIDTH / 2 - PANEL_PADDING * 2);
     if (this.opponentGrade) {
       const grade = gradeFor(msg.accuracy);
       this.opponentGrade.text = grade;
