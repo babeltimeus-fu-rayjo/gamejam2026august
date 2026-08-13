@@ -85,7 +85,20 @@ export class TitleScene implements Scene {
       )
       .fill({ color: 0x05030d, alpha: 0.55 });
 
-    this.view.addChild(this.tunnel, scrim, title, hintPill, this.hint);
+    // Build stamp, so we can tell which commit a running build came from.
+    const version = new Text({
+      text: __COMMIT_HASH__,
+      style: {
+        fontFamily: "monospace",
+        fontSize: 18,
+        letterSpacing: 2,
+        fill: 0x8b7fb0,
+      },
+    });
+    version.anchor.set(1, 1);
+    version.position.set(VIRTUAL_WIDTH - 16, VIRTUAL_HEIGHT - 12);
+
+    this.view.addChild(this.tunnel, scrim, title, hintPill, this.hint, version);
 
     const row = MODES.length * BUTTON_WIDTH + (MODES.length - 1) * BUTTON_GAP;
     MODES.forEach((m, i) => {
