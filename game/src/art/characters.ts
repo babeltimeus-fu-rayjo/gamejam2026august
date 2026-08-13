@@ -109,5 +109,49 @@ export const KOUEN: CharacterDef = {
   perk: { lifeDrainScale: 0.8 },
 };
 
+export const FEE: CharacterDef = {
+  id: "fee",
+  name: "Fee",
+  poses: poses("fee"),
+  sourceSize: SOURCE_SIZE,
+  accent: 0x63c74d,
+  perkBlurb: "deadeye focus",
+  // Risk/reward sharpshooter: windows tighten 10%, but the EXTRAORDINARY
+  // spotlight ignites four hits sooner for players who can hold the line.
+  perk: { windowScale: 0.9, extraordinaryCombo: 6 },
+};
+
+export const ELARA: CharacterDef = {
+  id: "elara",
+  name: "Elara",
+  poses: poses("elara"),
+  sourceSize: SOURCE_SIZE,
+  accent: 0x7fe0e8,
+  perkBlurb: "death's bargain",
+  // Misses drain 40% less life, paid for with slightly tighter windows.
+  // Deeper trade than Kouen's flat 20%: survival bought with precision.
+  perk: { lifeDrainScale: 0.6, windowScale: 0.95 },
+};
+
+export const EMMA: CharacterDef = {
+  id: "emma",
+  name: "Emma",
+  poses: poses("emma"),
+  sourceSize: SOURCE_SIZE,
+  accent: 0x9457c9,
+  perkBlurb: "high roller",
+  // The house's favorite bet: the loosest windows on the roster, but every
+  // miss drains 25% more life. Generous until the cards turn.
+  perk: { windowScale: 1.15, lifeDrainScale: 1.25 },
+};
+
 /** Selectable roster, in lobby cycle order. */
-export const CHARACTERS: readonly CharacterDef[] = [TEAL, IDOL, GAL, KOUEN];
+export const CHARACTERS: readonly CharacterDef[] = [
+  TEAL,
+  IDOL,
+  GAL,
+  KOUEN,
+  FEE,
+  ELARA,
+  EMMA,
+];
