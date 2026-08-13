@@ -25,6 +25,7 @@ export const SONGS: readonly SongDef[] = [
   { id: "kirakira-idol", title: "キラキラアイドル" },
   { id: "okitsunesama", title: "おキツネさま" },
   { id: "warm-coffee-blues", title: "Warm Coffee Blues" },
+  { id: "pridefall-boss", title: "Pridefall Boss" },
 ];
 
 /** Where a song's chart.json and audio live, with the deploy base applied. */
