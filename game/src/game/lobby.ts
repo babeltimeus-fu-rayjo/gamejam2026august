@@ -60,7 +60,7 @@ export class LobbyScene implements Scene {
   private elapsed = 0;
 
   constructor(
-    mode: GameMode,
+    private readonly gameMode: GameMode,
     private readonly onStart: () => void,
   ) {
     const heading = new Text({
@@ -277,8 +277,6 @@ export class LobbyScene implements Scene {
     }
     const key = e.key.toLowerCase();
 
-    // Solo keeps the "press any key" feel; C and J are the only keys claimed
-    // by multiplayer, so a player who never touches a room never notices it.
     if (this.mode === "solo") {
       if (key === "c") {
         void this.createRoom();
@@ -288,6 +286,14 @@ export class LobbyScene implements Scene {
         this.mode = "joining";
         this.codeBuffer = "";
         this.render();
+        return;
+      }
+      // Single mode keeps the "press any key" feel; C and J are the only keys
+      // multiplayer claims, so a player who never opens a room won't notice.
+      // Battle mode does NOT: someone who chose head-to-head on the title
+      // screen must not be dropped into a solo run by a stray keypress.
+      if (this.gameMode === "battle") {
+        if (key === "enter") this.tryStart();
         return;
       }
       if (!LobbyScene.NON_STARTER_KEYS.includes(e.key)) this.begin();
@@ -324,9 +330,16 @@ export class LobbyScene implements Scene {
     if (this.mode === "room" && room) {
       return `code ${room.code}${this.status ? ` — ${this.status}` : ""}`;
     }
-    return this.chartHashValue
-      ? "solo — [C] create room, [J] join by code"
-      : "loading chart…";
+    if (!this.chartHashValue) return "loading chart…";
+    return this.gameMode === "battle"
+      ? "[C] create room, [J] join by code"
+      : "solo — [C] create room, [J] join by code";
+  }
+
+  private modeValue(): string {
+    return this.gameMode === "battle"
+      ? "Battle — head to head over the network"
+      : "Single — solo run";
   }
 
   private playersValue(): string {
@@ -343,10 +356,11 @@ export class LobbyScene implements Scene {
   private startValue(): string {
     if (this.startingInMs !== null) return "starting…";
     if (this.mode === "room") return "[R] ready, Enter to start once all ready";
-    return "press any key";
+    return this.gameMode === "battle" ? "press Enter" : "press any key";
   }
 
   private render(): void {
+    this.setValue("MODE", this.modeValue());
     this.setValue("TRACK", "Demo Track — chart select lands in M3");
     this.setValue("ROOM", this.roomValue());
     this.setValue("PLAYERS", this.playersValue());
