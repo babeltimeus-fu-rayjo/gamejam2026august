@@ -21,8 +21,13 @@ import { GhostHud } from "../ui/ghost-hud";
 import { Hud } from "../ui/hud";
 import { SongProgressBar } from "../ui/progress-bar";
 import {
+  punchesCamera,
   EXTRAORDINARY_COMBO,
   shakeOffset,
+  HOLD_RELEASE_AMPLITUDE,
+  HOLD_RELEASE_SHAKE_MS,
+  PUNCH_AMPLITUDE,
+  PUNCH_DURATION_MS,
   SHAKE_DURATION_MS,
   SHAKE_STREAK,
   tierFor,
@@ -133,6 +138,12 @@ export class GameplayScene implements Scene {
   private shakeStreak = 0;
   /** ms into the running camera shake; at or past the duration means idle. */
   private shakeAgeMs = SHAKE_DURATION_MS;
+  /** ms into the per-hit camera punch, on its own clock so the two can stack. */
+  private punchAgeMs = PUNCH_DURATION_MS;
+  // The punch's shape, so a tap and a completed hold can use the same slot with
+  // different weights.
+  private punchDurationMs = PUNCH_DURATION_MS;
+  private punchAmplitude = PUNCH_AMPLITUDE;
 
   constructor(
     private readonly song: SongDef,
@@ -413,6 +424,14 @@ export class GameplayScene implements Scene {
     );
     this.track.judged(r.note.lane, tier);
     this.trackShakeStreak(tier);
+    // Every good hit knocks the camera a little; the streak shake is the big
+    // reward on top of it. A hold ridden to its end hits harder than a tap —
+    // it is the moment seconds of sustain pay off.
+    if (r.part === "tail" && r.judgement !== "miss") {
+      this.punch(HOLD_RELEASE_SHAKE_MS, HOLD_RELEASE_AMPLITUDE);
+    } else if (punchesCamera(tier)) {
+      this.punch(PUNCH_DURATION_MS, PUNCH_AMPLITUDE);
+    }
     this.bus.emit("judgement", {
       judgement: r.judgement,
       tier,
@@ -587,14 +606,42 @@ export class GameplayScene implements Scene {
    * kick together. The scene sits inside the letterboxed root, so a few px of
    * travel never uncovers anything but the backdrop behind it.
    */
+  /** Start a camera knock, replacing any lighter one still ringing out. */
+  private punch(durationMs: number, amplitude: number): void {
+    const running = this.punchAgeMs < this.punchDurationMs;
+    if (running && amplitude < this.punchAmplitude) return;
+    this.punchAgeMs = 0;
+    this.punchDurationMs = durationMs;
+    this.punchAmplitude = amplitude;
+  }
+
   private updateShake(ticker: Ticker): void {
-    if (this.shakeAgeMs >= SHAKE_DURATION_MS) return;
-    this.shakeAgeMs += ticker.deltaMS;
-    if (this.shakeAgeMs >= SHAKE_DURATION_MS) {
-      this.view.position.set(0, 0);
-      return;
+    const shaking = this.shakeAgeMs < SHAKE_DURATION_MS;
+    const punching = this.punchAgeMs < this.punchDurationMs;
+    if (!shaking && !punching) return;
+
+    let x = 0;
+    let y = 0;
+    if (shaking) {
+      this.shakeAgeMs += ticker.deltaMS;
+      if (this.shakeAgeMs < SHAKE_DURATION_MS) {
+        const o = shakeOffset(this.shakeAgeMs);
+        x += o.x;
+        y += o.y;
+      }
     }
-    const { x, y } = shakeOffset(this.shakeAgeMs);
+    if (punching) {
+      this.punchAgeMs += ticker.deltaMS;
+      if (this.punchAgeMs < this.punchDurationMs) {
+        const o = shakeOffset(
+          this.punchAgeMs,
+          this.punchDurationMs,
+          this.punchAmplitude,
+        );
+        x += o.x;
+        y += o.y;
+      }
+    }
     this.view.position.set(x, y);
   }
 

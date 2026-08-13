@@ -9,6 +9,7 @@ import {
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { LANE_KEY_LABELS } from "../core/input";
 import { TIER_COLOR, type FeedbackTier } from "./feedback";
+import { hasPaintedFlash, HitFx } from "./hit-fx";
 import { isHold, isResolved, type JudgedNote } from "./judge";
 
 // Track geometry — a trapezoidal highway over the art layer: narrow at
@@ -61,6 +62,27 @@ function laneCenterXAt(lane: number, y: number): number {
 }
 
 /**
+ * The area a lane's hit effects are sized and centred on: its reaction pad,
+ * scaled up so the painted art's radiance overflows the slab on every side.
+ * One definition, so a judgement's flash and a hold's spark spray can't drift
+ * apart.
+ */
+function padRect(lane: number): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} {
+  const y = HIT_Y + PAD_HEIGHT / 2;
+  return {
+    x: laneCenterXAt(lane, y),
+    y,
+    width: (trackWidthAt(y) / 4) * FLASH_WIDTH_SCALE,
+    height: PAD_HEIGHT * FLASH_HEIGHT_SCALE,
+  };
+}
+
+/**
  * Vertical "distance fog": transparent at the vanishing end, fully
  * opaque from just below the middle of the screen on down.
  */
@@ -103,9 +125,23 @@ const PAD_GLOW_SPREAD = 30;
 /** Lit level for a bare keypress — a judgement takes it all the way to 1. */
 const PAD_PRESS_STRENGTH = 0.45;
 const PAD_DECAY_MS = 260;
-const PAD_LIGHT_ALPHA = 0.85;
-const PAD_GLOW_ALPHA = 0.8;
+const PAD_LIGHT_ALPHA = 0.95;
+const PAD_GLOW_ALPHA = 0.95;
 const PAD_BASE_ALPHA = 0.16;
+
+// Keycap punch: the receptor and its letter jolt bigger on a judged hit and
+// spring back. Small and quick — it's the piece of feedback closest to the
+// player's fingers, so it only has to register, not perform.
+const PUNCH_DECAY_MS = 165;
+const PUNCH_BOX_SCALE = 0.2;
+const PUNCH_LABEL_SCALE = 0.13;
+
+// The painted flash is stretched to sit over the pad, with its radiance
+// overflowing: the art's bright rectangle covers the lane's slab and the rays
+// spill past the lane's sides and up the track. Multiples of the pad, so the
+// numbers keep meaning something if the zone is ever resized.
+const FLASH_WIDTH_SCALE = 1.75;
+const FLASH_HEIGHT_SCALE = 2.6;
 
 // Per-lane palette (D F J K) shared by notes, receptors, and key labels:
 // dusty, desaturated arcane-ish tones — rose, amethyst, jade, antique
@@ -170,18 +206,35 @@ const HOLD_CAP_CONTEXTS = LANE_COLORS.map(({ note }) =>
 /** Dimmed until the player is actually riding the hold. */
 const HOLD_IDLE_ALPHA = 0.85;
 
+// Riding a hold: everything about the lane escalates for as long as the key
+// stays down. Energy ramps up while the bar is being consumed and falls away
+// quickly once it isn't, and it drives all of it at once — the bar's own light,
+// the reaction zone's brightness, and how hard the pad throws sparks.
+const HOLD_RAMP_MS = 650;
+const HOLD_FALL_MS = 220;
+/** Zone brightness while holding: this at the start, full at max energy. */
+const HOLD_PAD_FLOOR = 0.55;
+/** Sparks per second off the pad, at zero and at full energy. */
+const HOLD_SPARK_RATE_MIN = 34;
+const HOLD_SPARK_RATE_MAX = 130;
+/** Extra width the bar's glow bleeds past its edges, at full energy. */
+const HOLD_GLOW_SPREAD = 16;
+const HOLD_GLOW_PULSE_MS = 190;
+
 /** A pooled hold: head + stretchable body + tail cap, moved as one. */
 interface HoldSprite {
   view: Container;
   head: Graphics;
   body: Graphics;
+  /** Additive light bleeding out of the bar while it is being ridden. */
+  glow: Graphics;
   cap: Graphics;
 }
 
-// Hit burst — when a note is keyed in time it flashes bright at the hit
-// line, blooms outward, and fades. White geometry tinted with the judgement's
-// colour + additive blend reads as light, not paint. Intensity scales with
-// judgement quality; a miss lights the zone red but gets no bloom.
+// Hit burst — a plain white bloom at the hit line, tinted per judgement and
+// additively blended so it reads as light rather than paint. Tiers with painted
+// art (hit-fx.ts) use that instead; this is what GOOD gets, and the intensity
+// table is still what tells every layer how hard the hit was.
 const BURST_DURATION_MS = 280;
 const BURST_MAX_SCALE = 1.55;
 const BURST_INTENSITY: Readonly<Record<FeedbackTier, number>> = {
@@ -208,7 +261,7 @@ interface Burst {
 // at half the screen height by design.
 const GLOW_HEIGHT = VIRTUAL_HEIGHT * 0.5;
 const GLOW_DURATION_MS = 420;
-const GLOW_PEAK_ALPHA = 0.9;
+const GLOW_PEAK_ALPHA = 1;
 
 /**
  * Renders the 4-lane track: lane strips, hit line, receptors, and pooled
@@ -225,6 +278,14 @@ export class Track {
   private readonly padGlows: Graphics[] = [];
   /** Per lane 0..1: 1 the moment a note is judged, decaying to nothing. */
   private readonly padStrengths = [0, 0, 0, 0];
+  /** Per lane 0..1 keycap jolt, on its own faster clock than the zone light. */
+  private readonly padPunches = [0, 0, 0, 0];
+  /** Per lane 0..1: how long the player has been riding a hold in this lane. */
+  private readonly holdEnergy = [0, 0, 0, 0];
+  /** Set by sync() for lanes with a live hold; consumed by update(). */
+  private readonly holdActive = [false, false, false, false];
+  /** Fractional spark debt, so a rate in sparks/second survives short frames. */
+  private readonly holdSparkCarry = [0, 0, 0, 0];
   /** Colour each zone is currently showing (judgement tier, or lane idle). */
   private readonly padTints: number[] = [];
   private readonly holdsLayer = new Container();
@@ -239,8 +300,17 @@ export class Track {
   private readonly glows: Graphics[] = [];
   /** Per lane, 0..1; jumps on a hit, decays linearly, drives glow alpha. */
   private readonly glowStrengths = [0, 0, 0, 0];
+  /** Painted per-tier flashes + sparks over the reaction zone. */
+  private readonly hitFx = new HitFx();
   /** Index into the (sorted) note list of the next note to spawn. */
   private spawnCursor = 0;
+  /** Wall clock for the sustained effects' pulses. */
+  private elapsedMs = 0;
+
+  /** Warm the painted flash textures before the first note lands. */
+  static preload(): Promise<unknown> {
+    return HitFx.preload();
+  }
 
   /** @param scrollSpeed px per second of song time (see core/difficulty.ts). */
   constructor(private readonly scrollSpeed: number = SCROLL_SPEED) {
@@ -306,6 +376,9 @@ export class Track {
     );
 
     this.buildReactionZones();
+    // Above the zone and its keycaps: the flash is an impact in front of the
+    // slab the player struck, not another layer of its lighting.
+    this.view.addChild(this.hitFx.view);
   }
 
   /**
@@ -375,6 +448,11 @@ export class Track {
         .stroke({ width: 3, color: 0xffffff });
       box.tint = LANE_COLORS[lane].note;
       box.alpha = RECEPTOR_IDLE_ALPHA;
+      // The keycap is drawn in track coordinates, so pivot and position are set
+      // to its own centre: the punch then scales it in place instead of
+      // dragging it toward the corner of the screen.
+      box.pivot.set(cx, HIT_Y + 50);
+      box.position.set(cx, HIT_Y + 50);
       this.receptors.push(box);
 
       // White fill + tint, like everything else in the zone, so the keycap
@@ -415,11 +493,32 @@ export class Track {
     const color = TIER_COLOR[tier];
     this.padTints[lane] = color;
     this.padStrengths[lane] = 1;
+    this.padPunches[lane] = 1;
     this.applyPad(lane);
     this.glows[lane].tint = color;
 
     const intensity = BURST_INTENSITY[tier];
     if (intensity <= 0) return;
+
+    // Painted flash + sparks over the pad, sized from the lane's own slab so
+    // the art lands on the rectangle the player is aiming at.
+    const pad = padRect(lane);
+    this.hitFx.play({
+      tier,
+      x: pad.x,
+      y: pad.y,
+      width: pad.width,
+      height: pad.height,
+      strength: intensity,
+    });
+
+    this.glowStrengths[lane] = Math.max(this.glowStrengths[lane], intensity);
+    this.glows[lane].alpha = GLOW_PEAK_ALPHA * this.glowStrengths[lane] ** 2;
+
+    // The painted art brings its own core flash; doubling it up with the plain
+    // bloom only muddies it. GOOD, which has no art, still gets the bloom.
+    if (hasPaintedFlash(tier)) return;
+
     let sprite = this.burstPool.pop();
     if (!sprite) {
       sprite = new Graphics(BURST_CONTEXT);
@@ -432,9 +531,6 @@ export class Track {
     sprite.alpha = intensity;
     sprite.visible = true;
     this.bursts.push({ sprite, ageMs: 0, intensity });
-
-    this.glowStrengths[lane] = Math.max(this.glowStrengths[lane], intensity);
-    this.glows[lane].alpha = GLOW_PEAK_ALPHA * this.glowStrengths[lane] ** 2;
   }
 
   /** Push a lane's current strength + colour onto its four zone layers. */
@@ -453,14 +549,91 @@ export class Track {
       RECEPTOR_IDLE_ALPHA + (1 - RECEPTOR_IDLE_ALPHA) * s;
   }
 
-  update(ticker: Ticker): void {
-    for (let lane = 0; lane < 4; lane++) {
-      if (this.padStrengths[lane] <= 0) continue;
-      this.padStrengths[lane] = Math.max(
-        0,
-        this.padStrengths[lane] - ticker.deltaMS / PAD_DECAY_MS,
-      );
+  /**
+   * A held lane, one frame's worth: the zone climbs toward full brightness, its
+   * light column comes up with it, and the pad keeps throwing sparks at a rate
+   * that rises with the energy. Called only while the key is actually down, so
+   * releasing lets the ordinary decay take everything back.
+   */
+  private applyHold(lane: number, deltaMs: number): void {
+    const energy = this.holdEnergy[lane];
+    const sustain = HOLD_PAD_FLOOR + (1 - HOLD_PAD_FLOOR) * energy;
+    if (this.padStrengths[lane] < sustain) {
+      this.padStrengths[lane] = sustain;
       this.applyPad(lane);
+    }
+    if (this.glowStrengths[lane] < energy) {
+      this.glowStrengths[lane] = energy;
+      this.glows[lane].alpha = GLOW_PEAK_ALPHA * energy ** 2;
+    }
+
+    const rate =
+      HOLD_SPARK_RATE_MIN +
+      (HOLD_SPARK_RATE_MAX - HOLD_SPARK_RATE_MIN) * energy;
+    this.holdSparkCarry[lane] += (rate * deltaMs) / 1000;
+    const count = Math.floor(this.holdSparkCarry[lane]);
+    if (count <= 0) return;
+    this.holdSparkCarry[lane] -= count;
+    const pad = padRect(lane);
+    this.hitFx.spray({
+      // The head's judgement colour: a hold keeps saying what catching it said.
+      color: this.padTints[lane],
+      x: pad.x,
+      y: pad.y,
+      width: pad.width,
+      height: pad.height,
+      strength: 0.45 + 0.55 * energy,
+      count,
+    });
+  }
+
+  /** Keycap jolt: bigger the instant it's hit, springing back to size. */
+  private applyPunch(lane: number): void {
+    const p = this.padPunches[lane];
+    // Squared decay: the recoil is nearly over by the time the eye returns.
+    const k = p * p;
+    this.receptors[lane].scale.set(1 + PUNCH_BOX_SCALE * k);
+    this.keyLabels[lane].scale.set(1 + PUNCH_LABEL_SCALE * k);
+  }
+
+  update(ticker: Ticker): void {
+    this.elapsedMs += ticker.deltaMS;
+    this.hitFx.update(ticker.deltaMS);
+
+    for (let lane = 0; lane < 4; lane++) {
+      if (this.padStrengths[lane] > 0) {
+        this.padStrengths[lane] = Math.max(
+          0,
+          this.padStrengths[lane] - ticker.deltaMS / PAD_DECAY_MS,
+        );
+        this.applyPad(lane);
+      }
+      if (this.padPunches[lane] > 0) {
+        this.padPunches[lane] = Math.max(
+          0,
+          this.padPunches[lane] - ticker.deltaMS / PUNCH_DECAY_MS,
+        );
+        this.applyPunch(lane);
+      }
+
+      // Hold energy rises while the key is down and falls away fast once it
+      // isn't, so a released hold hands the lane back to the normal decay.
+      const held = this.holdActive[lane];
+      this.holdActive[lane] = false; // re-armed by the next sync()
+      if (held) {
+        this.holdEnergy[lane] = Math.min(
+          1,
+          this.holdEnergy[lane] + ticker.deltaMS / HOLD_RAMP_MS,
+        );
+        // Applied after the decay above, so the sustain wins while it lasts.
+        this.applyHold(lane, ticker.deltaMS);
+      } else if (this.holdEnergy[lane] > 0) {
+        this.holdEnergy[lane] = Math.max(
+          0,
+          this.holdEnergy[lane] - ticker.deltaMS / HOLD_FALL_MS,
+        );
+        this.holdSparkCarry[lane] = 0;
+      }
     }
 
     for (let lane = 0; lane < 4; lane++) {
@@ -542,8 +715,9 @@ export class Track {
         Math.max(0, 1 - (bottom - HIT_Y) / NOTE_FADE_PX),
       );
       hold.view.alpha = (note.holding ? 1 : HOLD_IDLE_ALPHA) * fade;
-      // Keep the receptor lit for the whole sustain, not just its head.
-      if (note.holding) this.flash(note.lane);
+      // Riding it: update() escalates the whole lane for as long as this flag
+      // keeps being set — zone light, spark rate and the bar's own glow.
+      if (note.holding) this.holdActive[note.lane] = true;
     }
   }
 
@@ -579,6 +753,7 @@ export class Track {
     const bx = laneCenterXAt(lane, foot);
     const tx = laneCenterXAt(lane, top);
     hold.body.clear();
+    hold.glow.clear();
     // A hold that hasn't reached the frame yet clamps both ends to the same
     // height. Drawing that flat quad anyway hands the triangulator a shape
     // with no area, which yields no triangles for indices the batcher has
@@ -586,14 +761,34 @@ export class Track {
     // size") for the whole batch. An empty body is the correct picture here
     // in any case: there is nothing on screen to draw yet.
     if (foot - top >= 1) {
-      hold.body
-        .poly([
-          { x: bx - bw, y: foot },
-          { x: bx + bw, y: foot },
-          { x: tx + tw, y: top },
-          { x: tx - tw, y: top },
-        ])
-        .fill({ color: LANE_COLORS[lane].note, alpha: 0.5 });
+      const quad = (spread: number): { x: number; y: number }[] => [
+        { x: bx - bw - spread, y: foot },
+        { x: bx + bw + spread, y: foot },
+        { x: tx + tw + spread, y: top },
+        { x: tx - tw - spread, y: top },
+      ];
+      // A bar being ridden lights up: brighter core, white rim, and light
+      // bleeding out past its edges. Energy is the lane's, not the note's, so
+      // the bar and the reaction zone brighten on exactly the same curve.
+      const energy = this.holdEnergy[lane];
+      hold.body.poly(quad(0)).fill({
+        color: energy > 0 ? LANE_COLORS[lane].label : LANE_COLORS[lane].note,
+        alpha: 0.5 + 0.4 * energy,
+      });
+      if (energy > 0) {
+        hold.body.poly(quad(0)).stroke({
+          width: 2,
+          color: 0xffffff,
+          alpha: 0.55 * energy,
+        });
+        // Pulsing, so a long sustain reads as alive rather than as a lit shape.
+        const pulse =
+          0.75 + 0.25 * Math.sin(this.elapsedMs / HOLD_GLOW_PULSE_MS);
+        hold.glow.poly(quad(HOLD_GLOW_SPREAD * energy)).fill({
+          color: LANE_COLORS[lane].label,
+          alpha: 0.3 * energy * pulse,
+        });
+      }
     }
     // The cap marks where the hold actually ends; while that is still
     // upfield of the frame, drawing it at the clamped top would plant a
@@ -634,11 +829,14 @@ export class Track {
       // The body owns its Graphics: layoutHold() clear()s and redraws it
       // every frame, which must never mutate a shared context.
       const body = new Graphics();
+      // Additive, and under the body: the bar's own light, not part of it.
+      const glow = new Graphics();
+      glow.blendMode = "add";
       const cap = new Graphics(HOLD_CAP_CONTEXTS[note.lane]);
       const head = new Graphics(NOTE_CONTEXTS[note.lane]);
-      view.addChild(body, cap, head);
+      view.addChild(glow, body, cap, head);
       this.holdsLayer.addChild(view);
-      hold = { view, head, body, cap };
+      hold = { view, head, body, glow, cap };
     }
     hold.cap.context = HOLD_CAP_CONTEXTS[note.lane];
     hold.head.context = NOTE_CONTEXTS[note.lane];
