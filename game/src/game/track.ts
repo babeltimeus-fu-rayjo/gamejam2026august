@@ -553,6 +553,15 @@ export class Track {
    * between the head's and tail's local lane widths; cap and head take
    * the perspective scale at their own heights. Active holds are few,
    * so the per-frame poly rebuild stays cheap.
+   *
+   * Both ends of that quad have to sit inside the frame. The lane geometry
+   * is only defined between the vanishing end and the bottom of the screen —
+   * `trackWidthAt` clamps outside it — so a bar long enough to run off the
+   * top would take y=0's x for a vertex placed thousands of px higher, and
+   * the visible stretch would lean out of its lane. Clamping the *drawn*
+   * span keeps the quad exact instead: the lane's edges are linear in y, so
+   * a bar between any two on-screen heights follows them precisely, and a
+   * long hold slides down out of the vanishing point still glued to its lane.
    */
   private layoutHold(
     lane: number,
@@ -560,24 +569,40 @@ export class Track {
     bottom: number,
     tailY: number,
   ): void {
-    const top = Math.min(bottom, tailY);
-    const bw = (HOLD_WIDTH / 2) * perspectiveAt(bottom);
+    const clamp = (y: number): number =>
+      Math.max(0, Math.min(VIRTUAL_HEIGHT, y));
+    const tail = Math.min(bottom, tailY);
+    const top = clamp(tail);
+    const foot = clamp(bottom);
+    const bw = (HOLD_WIDTH / 2) * perspectiveAt(foot);
     const tw = (HOLD_WIDTH / 2) * perspectiveAt(top);
-    const bx = laneCenterXAt(lane, bottom);
+    const bx = laneCenterXAt(lane, foot);
     const tx = laneCenterXAt(lane, top);
-    hold.body
-      .clear()
-      .poly([
-        { x: bx - bw, y: bottom },
-        { x: bx + bw, y: bottom },
-        { x: tx + tw, y: top },
-        { x: tx - tw, y: top },
-      ])
-      .fill({ color: LANE_COLORS[lane].note, alpha: 0.5 });
+    hold.body.clear();
+    // A hold that hasn't reached the frame yet clamps both ends to the same
+    // height. Drawing that flat quad anyway hands the triangulator a shape
+    // with no area, which yields no triangles for indices the batcher has
+    // already counted — WebGL then rejects the draw ("insufficient buffer
+    // size") for the whole batch. An empty body is the correct picture here
+    // in any case: there is nothing on screen to draw yet.
+    if (foot - top >= 1) {
+      hold.body
+        .poly([
+          { x: bx - bw, y: foot },
+          { x: bx + bw, y: foot },
+          { x: tx + tw, y: top },
+          { x: tx - tw, y: top },
+        ])
+        .fill({ color: LANE_COLORS[lane].note, alpha: 0.5 });
+    }
+    // The cap marks where the hold actually ends; while that is still
+    // upfield of the frame, drawing it at the clamped top would plant a
+    // false end on the horizon.
+    hold.cap.visible = tail >= 0;
     hold.cap.position.set(tx, top);
     hold.cap.scale.set(perspectiveAt(top));
-    hold.head.position.set(bx, bottom);
-    hold.head.scale.set(perspectiveAt(bottom));
+    hold.head.position.set(bx, foot);
+    hold.head.scale.set(perspectiveAt(foot));
   }
 
   private acquire(note: JudgedNote): void {
