@@ -26,7 +26,9 @@ import {
   stepDifficulty,
   type DifficultyId,
 } from "../core/difficulty";
+import { CodePad } from "./code-pad";
 import { drawAccentRing, drawPanel } from "./panel";
+import { makePill, type Pill } from "./pill-button";
 import type { Scene } from "./scenes";
 import { VideoBackdrop } from "./video-backdrop";
 
@@ -81,6 +83,13 @@ export class LobbyScene implements Scene {
   private readonly backdrop = new VideoBackdrop();
   private readonly values = {} as Record<RowKey, Text>;
   private readonly unsubscribes: (() => void)[] = [];
+  // Pointer twins of the key bindings; assigned in buildRow / the ctor.
+  private createPill!: Pill;
+  private joinPill!: Pill;
+  private leavePill!: Pill;
+  private readyPill!: Pill;
+  private codePad!: CodePad;
+  private startText!: Text;
 
   private mode: "solo" | "joining" | "room" = "solo";
   private codeBuffer = "";
@@ -154,6 +163,21 @@ export class LobbyScene implements Scene {
     });
     start.anchor.set(0.5);
     start.position.set(VIRTUAL_WIDTH / 2, START_Y);
+    // START is also a button: same entry point the Enter key uses, so the
+    // room rules (peer present, everyone ready) hold for taps too.
+    start.eventMode = "static";
+    start.cursor = "pointer";
+    start.hitArea = new Rectangle(
+      -start.width / 2 - 20,
+      -start.height / 2 - 12,
+      start.width + 40,
+      start.height + 24,
+    );
+    start.on("pointertap", () => {
+      if (this.startTimer !== null || this.mode === "joining") return;
+      this.tryStart();
+    });
+    this.startText = start;
 
     // The old START row's value line, now centred under the word. Still driven
     // by startValue(), so it keeps reporting ready state and the countdown.
@@ -166,6 +190,30 @@ export class LobbyScene implements Scene {
     this.values.START = startHint;
 
     this.view.addChild(start, startHint);
+
+    // Join-code modal: tap-first entry that shares the keyboard path's code
+    // buffer. Added last so it sits above every row when open.
+    this.codePad = new CodePad({
+      onChar: (c) => {
+        this.codeBuffer = normalizeRoomCode(this.codeBuffer + c);
+        this.render();
+      },
+      onBackspace: () => {
+        this.codeBuffer = this.codeBuffer.slice(0, -1);
+        this.render();
+      },
+      onJoin: () => {
+        if (isCompleteRoomCode(this.codeBuffer))
+          void this.enterRoom(this.codeBuffer);
+      },
+      onCancel: () => {
+        this.mode = "solo";
+        this.codeBuffer = "";
+        this.render();
+      },
+    });
+    this.codePad.view.visible = false;
+    this.view.addChild(this.codePad.view);
 
     // Returning from results with a room still open: re-attach to it.
     const existing = activeRoom();
@@ -218,10 +266,88 @@ export class LobbyScene implements Scene {
       },
     });
     value.anchor.set(0, 0.5);
-    value.position.set(200, PANEL_HEIGHT / 2);
+    // Spinner rows carry a pair of tap arrows ahead of the value.
+    const spinner = key === "AVATAR" || key === "DIFFICULTY";
+    value.position.set(spinner ? 292 : 200, PANEL_HEIGHT / 2);
 
     this.values[key] = value;
     row.addChild(panel, label, value);
+
+    if (key === "AVATAR") {
+      row.addChild(
+        this.makeArrow("◄", 212, () => this.cycleCharacter(-1)),
+        this.makeArrow("►", 252, () => this.cycleCharacter(1)),
+      );
+    }
+    if (key === "DIFFICULTY") {
+      // Up is the *easier* direction, matching the ↑/↓ keys.
+      row.addChild(
+        this.makeArrow("▲", 212, () => this.cycleDifficulty(-1)),
+        this.makeArrow("▼", 252, () => this.cycleDifficulty(1)),
+      );
+    }
+    if (key === "ROOM") {
+      this.createPill = makePill({
+        label: "CREATE",
+        onTap: () => {
+          if (this.startTimer !== null) return;
+          void this.createRoom();
+        },
+      });
+      this.joinPill = makePill({
+        label: "JOIN",
+        onTap: () => {
+          if (this.startTimer !== null) return;
+          this.mode = "joining";
+          this.codeBuffer = "";
+          this.render();
+        },
+      });
+      this.leavePill = makePill({
+        label: "LEAVE",
+        onTap: () => {
+          if (this.startTimer !== null) return;
+          void this.exitRoom();
+        },
+      });
+      // Right-aligned like MODE's affordance: JOIN hugs the edge, CREATE
+      // sits left of it; LEAVE takes JOIN's spot when in a room.
+      const pillY = (PANEL_HEIGHT - 40) / 2;
+      const joinX = PANEL_WIDTH - 24 - this.joinPill.view.width;
+      this.joinPill.view.position.set(joinX, pillY);
+      this.createPill.view.position.set(
+        joinX - 12 - this.createPill.view.width,
+        pillY,
+      );
+      this.leavePill.view.position.set(
+        PANEL_WIDTH - 24 - this.leavePill.view.width,
+        pillY,
+      );
+      row.addChild(
+        this.createPill.view,
+        this.joinPill.view,
+        this.leavePill.view,
+      );
+    }
+    if (key === "PLAYERS") {
+      this.readyPill = makePill({
+        label: "READY",
+        minWidth: 110,
+        onTap: () => {
+          if (this.startTimer !== null) return;
+          const room = activeRoom();
+          if (!room) return;
+          room.setReady(!room.ready);
+          this.render();
+        },
+      });
+      this.readyPill.view.position.set(
+        PANEL_WIDTH - 24 - this.readyPill.view.width,
+        (PANEL_HEIGHT - 40) / 2,
+      );
+      row.addChild(this.readyPill.view);
+    }
+
     if (key !== "MODE") return row;
 
     // Hover ring, so the one clickable row announces itself on approach. Same
@@ -256,6 +382,31 @@ export class LobbyScene implements Scene {
     row.on("pointertap", () => void this.goBack());
 
     return row;
+  }
+
+  /**
+   * A tap arrow for the spinner rows — the pointer twin of an arrow key.
+   * The glyph is small; the hit area is a full-height 40px column so it
+   * works as a touch target.
+   */
+  private makeArrow(glyph: string, x: number, onTap: () => void): Text {
+    const arrow = new Text({
+      text: glyph,
+      style: { fontFamily: "Arial", fontSize: 22, fill: 0xcfc4f2 },
+    });
+    arrow.anchor.set(0.5);
+    arrow.position.set(x, PANEL_HEIGHT / 2);
+    arrow.alpha = 0.75;
+    arrow.eventMode = "static";
+    arrow.cursor = "pointer";
+    arrow.hitArea = new Rectangle(-20, -PANEL_HEIGHT / 2, 40, PANEL_HEIGHT);
+    arrow.on("pointerover", () => (arrow.alpha = 1));
+    arrow.on("pointerout", () => (arrow.alpha = 0.75));
+    arrow.on("pointertap", () => {
+      if (this.startTimer !== null) return;
+      onTap();
+    });
+    return arrow;
   }
 
   /**
@@ -341,6 +492,7 @@ export class LobbyScene implements Scene {
       chartId: SONG_DIR,
       chartHash: this.chartHashValue,
       difficulty: this.difficulty,
+      character: CHARACTERS[this.characterIndex].id,
     });
     this.mode = "room";
     this.peers = [];
@@ -437,6 +589,8 @@ export class LobbyScene implements Scene {
     const n = CHARACTERS.length;
     this.characterIndex = (this.characterIndex + step + n) % n;
     this.onCharacter(CHARACTERS[this.characterIndex]);
+    // A peer needs the re-pick to dress the opponent avatar correctly.
+    activeRoom()?.setCharacter(CHARACTERS[this.characterIndex].id);
     this.render();
   }
 
@@ -525,19 +679,19 @@ export class LobbyScene implements Scene {
         .padEnd(ROOM_CODE_LENGTH, "_")
         .split("")
         .join(" ");
-      return `join code: ${shown}   (Enter to join, Esc to cancel)`;
+      return `join code: ${shown}`;
     }
     const room = activeRoom();
     if (this.mode === "room" && room) {
-      // Leaving has to be discoverable from inside the room: a player stuck
-      // with the wrong opponent otherwise has no on-screen way out.
+      // The LEAVE pill is the on-screen way out; Esc still works.
       const state = this.status ? ` — ${this.status}` : "";
-      return `code ${room.code}${state}   ·   [Esc] leave`;
+      return `code ${room.code}${state}`;
     }
     if (!this.chartHashValue) return "loading chart…";
+    // Kept short of the CREATE/JOIN pills on the row's right edge.
     return this.gameMode === "battle"
-      ? "[C] create room, [J] join by code"
-      : "solo — [C] create room, [J] join by code";
+      ? "make or join a room →"
+      : "solo — or make/join a room →";
   }
 
   private modeValue(): string {
@@ -550,9 +704,8 @@ export class LobbyScene implements Scene {
 
   private difficultyValue(): string {
     const d = DIFFICULTIES[this.difficulty];
-    // No "(↑/↓ to change)" tail: with the blurb it overruns the panel, and
-    // the AVATAR row directly below spells the arrow idiom out.
-    return `▲  ${d.label}  ▼   ${d.blurb}`;
+    // The ▲/▼ glyphs are real buttons on the row now, not part of the value.
+    return `${d.label}   ${d.blurb}`;
   }
 
   /**
@@ -585,14 +738,17 @@ export class LobbyScene implements Scene {
         (p) => p.difficulty !== null && p.difficulty !== this.difficulty,
       );
       return mixed
-        ? "[R] ready · Enter to start — ranked on accuracy"
-        : "[R] ready · Enter to start · [J] switch room";
+        ? "ready up (R), then START — ranked on accuracy"
+        : "ready up (R), then tap START or press Enter";
     }
-    return this.gameMode === "battle" ? "press Enter" : "press any key";
+    return this.gameMode === "battle"
+      ? "tap START or press Enter"
+      : "tap START or press any key";
   }
 
   private avatarValue(): string {
-    return `◄  ${CHARACTERS[this.characterIndex].name}  ►   (←/→ to change)`;
+    // The ◄/► glyphs are real buttons on the row now, not part of the value.
+    return `${CHARACTERS[this.characterIndex].name}   (tap ◄ ► or ←/→)`;
   }
 
   private render(): void {
@@ -604,6 +760,21 @@ export class LobbyScene implements Scene {
     this.setValue("ROOM", this.roomValue());
     this.setValue("PLAYERS", this.playersValue());
     this.setValue("START", this.startValue());
+
+    // Pointer twins follow the mode: pills swap with the room state, the
+    // code modal owns the screen while joining (START hides beneath it).
+    const joining = this.mode === "joining";
+    this.codePad.view.visible = joining;
+    this.codePad.setCode(this.codeBuffer);
+    this.codePad.setJoinEnabled(isCompleteRoomCode(this.codeBuffer));
+    this.startText.visible = !joining;
+    this.values.START.visible = !joining;
+    this.createPill.view.visible = this.mode === "solo";
+    this.joinPill.view.visible = this.mode === "solo";
+    this.leavePill.view.visible = this.mode === "room";
+    const room = activeRoom();
+    this.readyPill.view.visible = this.mode === "room" && room !== null;
+    this.readyPill.setLabel(room?.ready ? "UNREADY" : "READY");
   }
 
   /** Canvas Text re-renders on every assignment; only touch it on change. */

@@ -33,7 +33,7 @@ export function trackLeftAt(y: number): number {
 }
 
 /** x of the boundary between lane `edge - 1` and lane `edge` at height y. */
-function laneEdgeXAt(edge: number, y: number): number {
+export function laneEdgeXAt(edge: number, y: number): number {
   return trackLeftAt(y) + (edge / 4) * trackWidthAt(y);
 }
 
@@ -415,22 +415,33 @@ export class Track {
     tailY: number,
   ): void {
     const top = Math.min(bottom, tailY);
-    const bw = (HOLD_WIDTH / 2) * perspectiveAt(bottom);
-    const tw = (HOLD_WIDTH / 2) * perspectiveAt(top);
-    const bx = laneCenterXAt(lane, bottom);
-    const tx = laneCenterXAt(lane, top);
-    hold.body
-      .clear()
-      .poly([
-        { x: bx - bw, y: bottom },
-        { x: bx + bw, y: bottom },
-        { x: tx + tw, y: top },
-        { x: tx - tw, y: top },
-      ])
-      .fill({ color: LANE_COLORS[lane].note, alpha: 0.5 });
-    hold.cap.position.set(tx, top);
-    hold.cap.scale.set(perspectiveAt(top));
-    hold.head.position.set(bx, bottom);
+    // Clip the quad to the screen: lane geometry is only linear inside
+    // [0, VIRTUAL_HEIGHT] (trackWidthAt clamps), so a corner placed beyond
+    // that range shears the visible edges off the lane perspective.
+    const drawTop = Math.max(top, 0);
+    const drawBottom = Math.min(bottom, VIRTUAL_HEIGHT);
+    hold.body.clear();
+    if (drawBottom > drawTop) {
+      const bw = (HOLD_WIDTH / 2) * perspectiveAt(drawBottom);
+      const tw = (HOLD_WIDTH / 2) * perspectiveAt(drawTop);
+      const bx = laneCenterXAt(lane, drawBottom);
+      const tx = laneCenterXAt(lane, drawTop);
+      hold.body
+        .poly([
+          { x: bx - bw, y: drawBottom },
+          { x: bx + bw, y: drawBottom },
+          { x: tx + tw, y: drawTop },
+          { x: tx - tw, y: drawTop },
+        ])
+        .fill({ color: LANE_COLORS[lane].note, alpha: 0.5 });
+    }
+    // The tail cap only exists once the true tail is on screen; drawing it
+    // above y=0 would use clamped (wrong-x) geometry and can bleed into the
+    // letterbox on taller-than-16:9 windows.
+    hold.cap.visible = top >= 0;
+    hold.cap.position.set(laneCenterXAt(lane, drawTop), drawTop);
+    hold.cap.scale.set(perspectiveAt(drawTop));
+    hold.head.position.set(laneCenterXAt(lane, bottom), bottom);
     hold.head.scale.set(perspectiveAt(bottom));
   }
 

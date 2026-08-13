@@ -17,6 +17,15 @@ export class AudioClock {
   /** ctx.currentTime at which song t=0 falls; null until start(). */
   private startAt: number | null = null;
 
+  /**
+   * The context one-shot SFX play through (core/sfx.ts). Shared on purpose:
+   * one unlock gesture covers song and effects, and both live on the same
+   * hardware clock.
+   */
+  get context(): AudioContext {
+    return this.ctx;
+  }
+
   /** True once the context is unlocked and its clock is advancing. */
   get running(): boolean {
     return this.ctx.state === "running";

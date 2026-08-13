@@ -6,7 +6,7 @@
  * one thing to author and one thing to keep in sync with the audio; a new
  * song gets all three difficulties for free.
  *
- * Each difficulty moves three dials:
+ * Each difficulty moves four dials:
  *  - **scroll speed** — how fast notes travel. EASY is slow, which is the
  *    single biggest readability win for a new player: notes stay on screen
  *    much longer and the eye has time to plan the next press.
@@ -15,6 +15,8 @@
  *  - **note density** — EASY thins the chart to a minimum spacing and
  *    flattens chords to a single lane. Holds are never thinned away: they
  *    are the mechanic EASY most needs to teach.
+ *  - **life drain** — how hard misses punish the life gauge. HARD keeps
+ *    survival in play, NORMAL barely stings, EASY turns the gauge off.
  */
 import type { Chart, Note } from "./beatmap";
 
@@ -41,6 +43,11 @@ export interface Difficulty {
   minGap: number;
   /** Cap on simultaneous notes; 4 leaves chords intact. */
   maxChord: number;
+  /**
+   * Life drained per miss (a missed hold drains twice — head and tail).
+   * 0 disables the gauge entirely: no drain, no fail, no HUD bar.
+   */
+  lifeDrainMiss: number;
   /** Tint for the lobby row and the gameplay status line. */
   color: number;
   blurb: string;
@@ -57,6 +64,7 @@ export const DIFFICULTIES: Readonly<Record<DifficultyId, Difficulty>> = {
     // every other eighth and leaves a whole beat to move a finger.
     minGap: 0.7,
     maxChord: 1,
+    lifeDrainMiss: 0,
     color: 0x7cb583,
     blurb: "slower notes, fewer of them",
   },
@@ -67,6 +75,9 @@ export const DIFFICULTIES: Readonly<Record<DifficultyId, Difficulty>> = {
     windowScale: 1,
     minGap: 0,
     maxChord: 4,
+    // Very forgiving: ~100 straight misses to fail — the gauge is a
+    // pressure meter here, not a wall.
+    lifeDrainMiss: 10,
     color: 0xc7a763,
     blurb: "the chart as authored",
   },
@@ -77,6 +88,9 @@ export const DIFFICULTIES: Readonly<Record<DifficultyId, Difficulty>> = {
     windowScale: 0.75,
     minGap: 0,
     maxChord: 4,
+    // Survival is the mode's identity, but ~40 misses to die still beats
+    // the old across-the-board 33.
+    lifeDrainMiss: 25,
     color: 0xc9708e,
     blurb: "fast notes, tight timing",
   },

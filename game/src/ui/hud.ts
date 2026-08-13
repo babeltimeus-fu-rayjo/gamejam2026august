@@ -125,6 +125,7 @@ export class Hud {
   private readonly vignette: Container;
   private readonly lifeValue: Text;
   private readonly lifeFill: Graphics;
+  private readonly lifeGroup = new Container();
   private lifeFraction = 1;
   private lifePulseMs = 0;
   private popupAgeMs = Infinity;
@@ -134,7 +135,7 @@ export class Hud {
   private vignetteOn = false;
   private vignettePhaseMs = 0;
 
-  constructor(bus: Emitter<GameEvents>) {
+  constructor(bus: Emitter<GameEvents>, opts: { showLife?: boolean } = {}) {
     this.scoreText = new Text({
       text: "SCORE 0",
       style: neonStyle(0x9678c8, {
@@ -245,6 +246,9 @@ export class Hud {
       .stroke({ width: 1.5, color: LIFE_PINK, alpha: 0.5 });
     this.lifeFill = new Graphics();
     this.redrawLife();
+    // EASY runs without the gauge; the group hides as one unit.
+    this.lifeGroup.addChild(lifeLabel, this.lifeValue, lifeBack, this.lifeFill);
+    this.lifeGroup.visible = opts.showLife !== false;
 
     // Four inward-fading strips; overlapping corners stack brighter,
     // which is exactly the vignette look. Additive so it reads as light.
@@ -267,10 +271,7 @@ export class Hud {
       this.comboText,
       this.comboLabel,
       this.popup,
-      lifeLabel,
-      this.lifeValue,
-      lifeBack,
-      this.lifeFill,
+      this.lifeGroup,
     );
 
     bus.on("judgement", ({ judgement, combo, score, life }) => {
@@ -312,7 +313,11 @@ export class Hud {
 
   update(ticker: Ticker): void {
     // Low life: the fill blinks urgency, full alpha otherwise.
-    if (this.lifeFraction > 0 && this.lifeFraction < LIFE_LOW_FRACTION) {
+    if (
+      this.lifeGroup.visible &&
+      this.lifeFraction > 0 &&
+      this.lifeFraction < LIFE_LOW_FRACTION
+    ) {
       this.lifePulseMs += ticker.deltaMS;
       this.lifeFill.alpha = 0.65 + 0.35 * Math.sin(this.lifePulseMs / 90);
     } else {
