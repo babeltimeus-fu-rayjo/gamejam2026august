@@ -9,7 +9,7 @@ import {
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import type { Emitter } from "../core/events";
 import type { Judgement } from "../game/judge";
-import type { GameEvents } from "../game/score";
+import { MAX_LIFE, type GameEvents } from "../game/score";
 
 // Regular Text (not BitmapText): the neon look needs canvas effects —
 // white core, colored stroke, zero-distance blurred dropShadow as the
@@ -104,6 +104,16 @@ const POPUP_Y = 220;
 const COMBO_NUMBER_Y = 300;
 const COMBO_LABEL_Y = 380;
 
+// Life gauge (top-right): pink bar + numeric readout. Misses drain it;
+// an empty gauge fails the run. Pulses once it gets low.
+const LIFE_PINK = 0xff6fae;
+const LIFE_BAR_W = 240;
+const LIFE_BAR_H = 12;
+const LIFE_X = VIRTUAL_WIDTH - 24 - LIFE_BAR_W;
+const LIFE_TEXT_Y = 30;
+const LIFE_BAR_Y = 46;
+const LIFE_LOW_FRACTION = 0.25;
+
 /** Score / combo readouts + judgement popup, driven by the gameplay bus. */
 export class Hud {
   readonly view = new Container();
@@ -113,6 +123,10 @@ export class Hud {
   private readonly comboLabel: Text;
   private readonly popup: Text;
   private readonly vignette: Container;
+  private readonly lifeValue: Text;
+  private readonly lifeFill: Graphics;
+  private lifeFraction = 1;
+  private lifePulseMs = 0;
   private popupAgeMs = Infinity;
   private popupPopScale = POPUP_POP_SCALE;
   /** 0..1 on/off envelope for the vignette; pulses while at 1. */
@@ -187,6 +201,51 @@ export class Hud {
     this.popup.position.set(VIRTUAL_WIDTH / 2, POPUP_Y);
     this.popup.alpha = 0;
 
+    // Life gauge: LIFE label left of the bar, count right-aligned above
+    // the bar's right end, pink fill redrawn only when life changes.
+    const lifeLabel = new Text({
+      text: "LIFE",
+      style: neonStyle(LIFE_PINK, {
+        fontSize: 22,
+        letterSpacing: 3,
+        stroke: { color: LIFE_PINK, width: 1 },
+        dropShadow: {
+          color: LIFE_PINK,
+          blur: 10,
+          distance: 0,
+          angle: 0,
+          alpha: 0.9,
+        },
+      }),
+    });
+    lifeLabel.anchor.set(0, 0.5);
+    lifeLabel.position.set(LIFE_X, LIFE_TEXT_Y);
+
+    this.lifeValue = new Text({
+      text: `${MAX_LIFE}`,
+      style: neonStyle(LIFE_PINK, {
+        fontSize: 22,
+        fontWeight: "700",
+        stroke: { color: LIFE_PINK, width: 1 },
+        dropShadow: {
+          color: LIFE_PINK,
+          blur: 10,
+          distance: 0,
+          angle: 0,
+          alpha: 0.9,
+        },
+      }),
+    });
+    this.lifeValue.anchor.set(1, 0.5);
+    this.lifeValue.position.set(LIFE_X + LIFE_BAR_W, LIFE_TEXT_Y);
+
+    const lifeBack = new Graphics()
+      .roundRect(LIFE_X, LIFE_BAR_Y, LIFE_BAR_W, LIFE_BAR_H, 6)
+      .fill({ color: 0x1d1630, alpha: 0.85 })
+      .stroke({ width: 1.5, color: LIFE_PINK, alpha: 0.5 });
+    this.lifeFill = new Graphics();
+    this.redrawLife();
+
     // Four inward-fading strips; overlapping corners stack brighter,
     // which is exactly the vignette look. Additive so it reads as light.
     this.vignette = new Container();
@@ -208,10 +267,20 @@ export class Hud {
       this.comboText,
       this.comboLabel,
       this.popup,
+      lifeLabel,
+      this.lifeValue,
+      lifeBack,
+      this.lifeFill,
     );
 
-    bus.on("judgement", ({ judgement, combo, score }) => {
+    bus.on("judgement", ({ judgement, combo, score, life }) => {
       this.scoreText.text = `SCORE ${score}`;
+      const fraction = life / MAX_LIFE;
+      if (fraction !== this.lifeFraction) {
+        this.lifeFraction = fraction;
+        this.lifeValue.text = `${life}`;
+        this.redrawLife();
+      }
       this.comboText.text = combo >= 2 ? `${combo}` : "";
       this.comboLabel.visible = combo >= 2;
       const extraordinary =
@@ -231,7 +300,26 @@ export class Hud {
     });
   }
 
+  /** Pink fill, proportional to life; rounded ends need a minimum width. */
+  private redrawLife(): void {
+    this.lifeFill.clear();
+    if (this.lifeFraction <= 0) return;
+    const w = Math.max(LIFE_BAR_H - 4, (LIFE_BAR_W - 4) * this.lifeFraction);
+    this.lifeFill
+      .roundRect(LIFE_X + 2, LIFE_BAR_Y + 2, w, LIFE_BAR_H - 4, 4)
+      .fill(LIFE_PINK);
+  }
+
   update(ticker: Ticker): void {
+    // Low life: the fill blinks urgency, full alpha otherwise.
+    if (this.lifeFraction > 0 && this.lifeFraction < LIFE_LOW_FRACTION) {
+      this.lifePulseMs += ticker.deltaMS;
+      this.lifeFill.alpha = 0.65 + 0.35 * Math.sin(this.lifePulseMs / 90);
+    } else {
+      this.lifeFill.alpha = 1;
+      this.lifePulseMs = 0;
+    }
+
     // Vignette: quick attack when the streak ignites, quicker cut on a
     // miss, gentle throb while alive.
     this.vignetteEnvelope = this.vignetteOn
