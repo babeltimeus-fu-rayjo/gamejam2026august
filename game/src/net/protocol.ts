@@ -13,9 +13,14 @@ import type { Judgement } from "../game/judge";
 
 /**
  * Bumped whenever a message shape *or* the meaning of its fields changes;
- * peers refuse to pair across it. v2 added per-player `difficulty`.
+ * peers refuse to pair across it. v2 added per-player `difficulty`; v3 added
+ * the armed/go handshake.
+ *
+ * v3 rather than v2 because both landed independently: a peer running the
+ * difficulty-only v2 never sends `go`, so pairing with this build would wait
+ * forever instead of failing loudly. Refusing the pair is the honest outcome.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /**
  * Trystero namespaces the DataChannel by action name and caps each at 12
@@ -25,6 +30,8 @@ export const ACTIONS = {
   hello: "hello",
   ready: "ready",
   start: "start",
+  armed: "armed",
+  go: "go",
   hit: "hit",
   state: "state",
   finish: "finish",
@@ -70,6 +77,29 @@ export type ReadyMsg = {
 export type StartMsg = {
   chartId: string;
   chartHash: string;
+  inMs: number;
+};
+
+/**
+ * "My audio is decoded and my AudioContext is unlocked."
+ *
+ * Both sides load and unlock at different moments (decode time, and the
+ * browser gesture that unlocks audio), so scene-switch alignment alone
+ * doesn't align playback. Nobody starts until everyone is armed.
+ */
+export type ArmedMsg = {
+  armed: boolean;
+};
+
+/**
+ * Host → peers, "start the audio in `inMs`".
+ *
+ * The receiver hands this straight to AudioClock.start(), so playback is
+ * scheduled on the hardware audio clock rather than a frame timer. The host
+ * adds its own half-RTT estimate before starting, so both songs reach t=0 at
+ * the same instant to within the latency estimate.
+ */
+export type GoMsg = {
   inMs: number;
 };
 
