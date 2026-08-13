@@ -19,7 +19,9 @@ import { GameplayRelay } from "../net/relay";
 import { activeRoom } from "../net/room";
 import { GhostHud } from "../ui/ghost-hud";
 import { Hud } from "../ui/hud";
+import { SongProgressBar } from "../ui/progress-bar";
 import {
+  EXTRAORDINARY_COMBO,
   shakeOffset,
   SHAKE_DURATION_MS,
   SHAKE_STREAK,
@@ -107,6 +109,10 @@ export class GameplayScene implements Scene {
   // Illustrated live-house backdrop + reactive LED screen (art/stage.ts).
   private readonly stage: Stage;
   private readonly status: Text;
+  /** Bottom-edge song position gauge; hidden until the chart loads. */
+  private readonly progress: SongProgressBar;
+  /** Player's EXTRAORDINARY threshold (character perk or the default). */
+  private readonly extraordinaryCombo: number;
   /** Song title + difficulty, pinned top-center for the whole run. */
   private readonly songTitle: Text;
 
@@ -133,8 +139,10 @@ export class GameplayScene implements Scene {
     private readonly difficulty: Difficulty,
     private readonly onFinish: (results: PlayResults) => void,
     private readonly onQuit: () => void,
-    character: CharacterDef,
+    private readonly character: CharacterDef,
   ) {
+    this.extraordinaryCombo =
+      character.perk?.extraordinaryCombo ?? EXTRAORDINARY_COMBO;
     this.avatar = new Avatar({
       side: "right",
       character,
@@ -144,11 +152,17 @@ export class GameplayScene implements Scene {
     // and replays their wire hits. HitMsg carries every judgement (misses
     // included), so ReactionController works unchanged from remote data.
     const peer = this.room?.peers[0] ?? null;
-    this.opponentAvatar = peer
+    // An unknown id (newer build) falls back to the default character —
+    // which also means no perk, the safe reading.
+    const opponentChar = peer
+      ? (CHARACTERS.find((c) => c.id === peer.character) ?? CHARACTERS[0])
+      : null;
+    const opponentThreshold =
+      opponentChar?.perk?.extraordinaryCombo ?? EXTRAORDINARY_COMBO;
+    this.opponentAvatar = opponentChar
       ? new Avatar({
           side: "left",
-          character:
-            CHARACTERS.find((c) => c.id === peer.character) ?? CHARACTERS[0],
+          character: opponentChar,
           bus: this.opponentBus,
         })
       : null;
@@ -157,8 +171,10 @@ export class GameplayScene implements Scene {
         ? this.room.bus.on("hit", ({ msg }) => {
             this.opponentBus.emit("judgement", {
               judgement: msg.judgement,
-              // Same derivation the local side uses, from their wire combo.
-              tier: tierFor(msg.judgement, msg.combo),
+              // Same derivation the local side uses, from their wire combo
+              // — at THEIR character's threshold, so their avatar hypes
+              // exactly when their own screen does.
+              tier: tierFor(msg.judgement, msg.combo, opponentThreshold),
               lane: msg.lane,
               deltaMs: null,
               combo: msg.combo,
@@ -172,7 +188,11 @@ export class GameplayScene implements Scene {
     // be built once the difficulty is in hand — hence the constructor body
     // rather than a field initializer. Same for the HUD's life toggle.
     this.track = new Track(difficulty.scrollSpeed);
-    this.hud = new Hud(this.bus, { showLife: difficulty.lifeDrainMiss > 0 });
+    this.hud = new Hud(this.bus, {
+      showLife: difficulty.lifeDrainMiss > 0,
+      accent: character.accent,
+    });
+    this.progress = new SongProgressBar(character.accent);
 
     // The screen's mirror shows the same character the player picked.
     this.stage = new Stage({ bus: this.bus, character });
@@ -257,6 +277,7 @@ export class GameplayScene implements Scene {
       this.ghost.view,
       this.songTitle,
       this.status,
+      this.progress.view,
       this.pauseOverlay,
       pauseButton.view,
       lobbyButton.view,
@@ -346,12 +367,26 @@ export class GameplayScene implements Scene {
     // The song is over when the last thing to judge has passed, and a hold's
     // tail outlives its head.
     this.lastNoteT = this.notes.reduce((max, n) => Math.max(max, n.t + n.d), 0);
-    this.judge = new Judge(this.notes, this.difficulty.windowScale);
+    this.judge = new Judge(
+      this.notes,
+      this.difficulty.windowScale * (this.character.perk?.windowScale ?? 1),
+    );
+    // Perk-scaled drain, kept integral; a zero base (EASY) stays zero so
+    // the gauge-off contract (no drain, no fail, no HUD bar) survives.
+    const baseDrain = this.difficulty.lifeDrainMiss;
+    const drain =
+      baseDrain > 0
+        ? Math.max(
+            1,
+            Math.round(baseDrain * (this.character.perk?.lifeDrainScale ?? 1)),
+          )
+        : 0;
     this.score = new ScoreState(
       this.notes.reduce((sum, n) => sum + noteWeight(n), 0),
-      this.difficulty.lifeDrainMiss,
+      drain,
     );
     this.songTitle.text = `${chart.song.title}   ·   ${this.difficulty.label}`;
+    this.progress.setDuration(chart.song.duration);
     this.stage.setBeat(chart.bpm, chart.offset);
     await this.clock.load(dir + chart.song.audioFile);
   }
@@ -371,7 +406,11 @@ export class GameplayScene implements Scene {
     // Scoring first: the tier reads the combo this note just produced, so an
     // EXTRAORDINARY shows on the hit that earns it, not on the next one.
     this.score.apply(r.judgement);
-    const tier = tierFor(r.judgement, this.score.combo);
+    const tier = tierFor(
+      r.judgement,
+      this.score.combo,
+      this.extraordinaryCombo,
+    );
     this.track.judged(r.note.lane, tier);
     this.trackShakeStreak(tier);
     this.bus.emit("judgement", {
@@ -588,6 +627,7 @@ export class GameplayScene implements Scene {
     }
 
     const t = this.clock.songTime();
+    this.progress.update(t);
 
     for (const resolution of this.judge.sweep(t)) {
       this.applyResolution(resolution);

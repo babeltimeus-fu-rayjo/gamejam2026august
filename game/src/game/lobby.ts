@@ -254,10 +254,11 @@ export class LobbyScene implements Scene {
       style: {
         fontFamily: "Arial",
         fontSize: 22,
-        // White so the difficulty row can recolour itself with `tint`,
-        // which costs nothing, instead of re-rendering the text canvas.
+        // White so the difficulty and avatar rows can recolour themselves
+        // with `tint`, which costs nothing, instead of re-rendering the
+        // text canvas.
         fill:
-          key === "DIFFICULTY"
+          key === "DIFFICULTY" || key === "AVATAR"
             ? 0xffffff
             : key === "MODE"
               ? MODE_COLOR[this.gameMode]
@@ -788,7 +789,9 @@ export class LobbyScene implements Scene {
 
   private avatarValue(): string {
     // The ◄/► glyphs are real buttons on the row now, not part of the value.
-    return `${CHARACTERS[this.characterIndex].name}   (tap ◄ ► or ←/→)`;
+    const c = CHARACTERS[this.characterIndex];
+    const blurb = c.perkBlurb ? ` — ${c.perkBlurb}` : "";
+    return `${c.name}${blurb}   (tap ◄ ► or ←/→)`;
   }
 
   private trackValue(): string {
@@ -801,6 +804,9 @@ export class LobbyScene implements Scene {
     this.setValue("DIFFICULTY", this.difficultyValue());
     this.values.DIFFICULTY.tint = DIFFICULTIES[this.difficulty].color;
     this.setValue("AVATAR", this.avatarValue());
+    // Characters with no accent (Teal) read in the rows' neutral lavender.
+    this.values.AVATAR.tint =
+      CHARACTERS[this.characterIndex].accent ?? 0x9f8fd8;
     this.setValue("ROOM", this.roomValue());
     this.setValue("PLAYERS", this.playersValue());
     this.setValue("START", this.startValue());
