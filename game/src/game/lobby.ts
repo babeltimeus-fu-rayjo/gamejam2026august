@@ -254,12 +254,19 @@ export class LobbyScene implements Scene {
     }
   }
 
-  /** Modifiers alone must not count as "any key". */
-  private static isModifier(key: string): boolean {
-    return (
-      key === "Shift" || key === "Control" || key === "Alt" || key === "Meta"
-    );
-  }
+  /**
+   * Keys that must not trigger the solo any-key start: bare modifiers
+   * (Shift alone shouldn't launch a game) and events with no key name —
+   * some browsers and input tools emit keydown with "" or "Unidentified".
+   */
+  private static readonly NON_STARTER_KEYS = [
+    "Shift",
+    "Control",
+    "Alt",
+    "Meta",
+    "Unidentified",
+    "",
+  ];
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (e.repeat) return;
@@ -283,7 +290,7 @@ export class LobbyScene implements Scene {
         this.render();
         return;
       }
-      if (!LobbyScene.isModifier(e.key)) this.begin();
+      if (!LobbyScene.NON_STARTER_KEYS.includes(e.key)) this.begin();
       return;
     }
 
