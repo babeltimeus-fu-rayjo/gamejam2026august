@@ -14,8 +14,9 @@ import { SceneManager } from "./game/scenes";
 import { TitleScene } from "./game/title";
 import { LobbyScene } from "./game/lobby";
 import { GameplayScene } from "./game/gameplay";
+import { Track } from "./game/track";
 import { ResultsScene } from "./game/results";
-import type { PlayResults } from "./game/score";
+import { gradeFor, type PlayResults } from "./game/score";
 import { preloadVideoBackdrop } from "./game/video-backdrop";
 
 // Async IIFE: top-level await breaks production builds on older Vite.
@@ -32,6 +33,8 @@ import { preloadVideoBackdrop } from "./game/video-backdrop";
   // Assets cache persists across scene switches, so this happens once.
   for (const c of CHARACTERS) void Avatar.preload(c);
   void Stage.preload();
+  void Track.preload();
+  void ResultsScene.preload();
 
   // Everything renders inside `root`, which is designed at 1280x720 virtual
   // coordinates and uniformly scaled to fit the window (letterboxed).
@@ -110,7 +113,12 @@ import { preloadVideoBackdrop } from "./game/video-backdrop";
     );
   const toResults = (results: PlayResults): void =>
     scenes.switchTo(
-      new ResultsScene(results, DIFFICULTIES[difficulty].label, toLobby),
+      new ResultsScene(
+        results,
+        DIFFICULTIES[difficulty].label,
+        toLobby,
+        character,
+      ),
     );
 
   app.ticker.add((ticker) => {
@@ -122,5 +130,33 @@ import { preloadVideoBackdrop } from "./game/video-backdrop";
     scenes.update(ticker);
   });
 
-  toTitle();
+  // `?results` (optionally `?results=S`) opens the results screen on a sample
+  // run, so its layout can be worked on without playing a chart through — same
+  // spirit as the stage's `?quad` calibration mode.
+  const debugGrade = new URLSearchParams(location.search).get("results");
+  if (debugGrade === null) toTitle();
+  else toResults(sampleResults(debugGrade));
 })();
+
+/** Stand-in run for the `?results` debug entry. */
+function sampleResults(grade: string): PlayResults {
+  const accuracy =
+    { S: 0.97, A: 0.92, B: 0.84, C: 0.71, D: 0.228 }[grade.toUpperCase()] ??
+    0.228;
+  const totalNotes = 257;
+  const score = Math.round(accuracy * 100 * totalNotes);
+  const hits = Math.round(totalNotes * Math.min(1, accuracy + 0.06));
+  return {
+    score,
+    maxCombo: Math.max(1, Math.round(hits * 0.42)),
+    accuracy,
+    grade: gradeFor(accuracy),
+    counts: {
+      perfect: Math.round(hits * 0.62),
+      great: Math.round(hits * 0.3),
+      good: hits - Math.round(hits * 0.62) - Math.round(hits * 0.3),
+      miss: totalNotes - hits,
+    },
+    totalNotes,
+  };
+}

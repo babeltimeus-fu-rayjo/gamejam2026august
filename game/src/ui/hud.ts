@@ -3,34 +3,19 @@ import {
   FillGradient,
   Graphics,
   Text,
-  TextStyle,
+  type TextStyle,
   Ticker,
 } from "pixi.js";
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
+import { neonStyle } from "./neon-text";
 import type { Emitter } from "../core/events";
 import { TIER_COLOR, type FeedbackTier } from "../game/feedback";
 import { MAX_LIFE, type GameEvents } from "../game/score";
 
-// Regular Text (not BitmapText): the neon look needs canvas effects —
-// white core, colored stroke, zero-distance blurred dropShadow as the
-// glow halo. These are short strings that re-render only on change.
+// The neon text look itself lives in ui/neon-text.ts — the results screen wears
+// it too, and the two have to stay identical.
 // Colours come from the shared judgement palette (game/feedback.ts), so the
 // popup and the lane's reaction zone light up in the same colour.
-
-/** Neon text: white-hot core, colored rim, colored glow halo. */
-function neonStyle(
-  glow: number,
-  overrides: ConstructorParameters<typeof TextStyle>[0] = {},
-): TextStyle {
-  return new TextStyle({
-    fontFamily: "Arial",
-    fontWeight: "900",
-    fill: 0xffffff,
-    stroke: { color: glow, width: 3 },
-    dropShadow: { color: glow, blur: 14, distance: 0, angle: 0, alpha: 0.9 },
-    ...overrides,
-  });
-}
 
 // One prebuilt style per popup tier; swapping styles re-renders the text.
 const POPUP_STYLES: Readonly<Record<FeedbackTier, TextStyle>> = {
