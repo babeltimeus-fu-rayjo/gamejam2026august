@@ -83,6 +83,24 @@ export class Bgm {
   }
 
   /**
+   * Stop the loop, keeping the context and decoded buffer so a later `play()`
+   * starts again without re-fetching. A buffer source cannot be restarted, so
+   * the next play begins at the top of the track.
+   */
+  stop(): void {
+    if (!this.source) return;
+    try {
+      this.source.stop();
+    } catch {
+      // Never started; nothing to stop.
+    }
+    this.source.disconnect();
+    this.source = null;
+    this.level = 0;
+    this.kick = 0;
+  }
+
+  /**
    * Sample the spectrum and update `level` / `kick`. Call once per frame.
    *
    * Onset test is the standard one: compare instantaneous low-band energy
@@ -126,4 +144,39 @@ export class Bgm {
     this.source?.disconnect();
     void this.ctx.close();
   }
+}
+
+const MENU_BGM_URL = `${import.meta.env.BASE_URL}audio/LobbyBM.mp3`;
+
+/**
+ * The menus' music, shared by title and lobby.
+ *
+ * A module singleton for the same reason the backdrop clip lives in the Assets
+ * cache: scenes are destroyed on every switch, and the track has to play on
+ * across title -> lobby without restarting. Gameplay owns the audio from there,
+ * so it calls `stopMenuBgm()` on the way in.
+ */
+let menu: Bgm | null = null;
+let menuLoad: Promise<void> | null = null;
+
+export function menuBgm(): Bgm {
+  menu ??= new Bgm();
+  return menu;
+}
+
+/**
+ * Load (once) and play the menu music, and retry the autoplay unlock. Safe to
+ * call from every menu scene's `enter()` and from input handlers.
+ */
+export function startMenuBgm(): void {
+  const bgm = menuBgm();
+  menuLoad ??= bgm.load(MENU_BGM_URL);
+  void menuLoad
+    .then(() => bgm.play())
+    .catch((err: unknown) => console.warn("[bgm] menu music unavailable", err));
+}
+
+/** Hand the audio over to gameplay. A later `startMenuBgm()` plays from the top. */
+export function stopMenuBgm(): void {
+  menu?.stop();
 }

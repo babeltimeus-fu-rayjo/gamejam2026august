@@ -1,11 +1,9 @@
-import { Container, Graphics, Text, Ticker } from "pixi.js";
+import { Container, Text, Ticker } from "pixi.js";
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH, type GameMode } from "../config";
-import { Bgm } from "../core/bgm";
+import { menuBgm, startMenuBgm } from "../core/bgm";
 import { NeonButton } from "./neon-button";
 import type { Scene } from "./scenes";
 import { VideoBackdrop } from "./video-backdrop";
-
-const BGM_URL = `${import.meta.env.BASE_URL}audio/LobbyBM.mp3`;
 
 const BUTTON_WIDTH = 300;
 const BUTTON_HEIGHT = 108;
@@ -32,7 +30,7 @@ export class TitleScene implements Scene {
   private readonly backdrop = new VideoBackdrop();
   private readonly buttons: NeonButton[] = [];
   private readonly hint: Text;
-  private readonly bgm = new Bgm();
+  private readonly bgm = menuBgm();
   private focus = 0;
   private elapsed = 0;
 
@@ -57,23 +55,21 @@ export class TitleScene implements Scene {
         fontSize: 24,
         letterSpacing: 4,
         fill: 0xcfc4f2,
+        // No pill behind the line, so the glyphs carry their own contrast: a
+        // dark shadow at zero distance darkens whatever video frame is under
+        // them without drawing a box.
+        dropShadow: {
+          color: 0x05030d,
+          alpha: 0.9,
+          blur: 6,
+          distance: 0,
+          angle: 0,
+        },
+        padding: 8,
       },
     });
     this.hint.anchor.set(0.5);
     this.hint.position.set(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.84);
-
-    // The video behind the hint can be any colour on any given frame, so the
-    // line needs its own backing to stay legible.
-    const pillH = this.hint.height + 20;
-    const hintPill = new Graphics()
-      .roundRect(
-        this.hint.x - this.hint.width / 2 - 24,
-        this.hint.y - pillH / 2,
-        this.hint.width + 48,
-        pillH,
-        pillH / 2,
-      )
-      .fill({ color: 0x05030d, alpha: 0.55 });
 
     // Build stamp, so we can tell which commit a running build came from.
     const version = new Text({
@@ -88,7 +84,7 @@ export class TitleScene implements Scene {
     version.anchor.set(1, 1);
     version.position.set(VIRTUAL_WIDTH - 16, VIRTUAL_HEIGHT - 12);
 
-    this.view.addChild(this.backdrop, title, hintPill, this.hint, version);
+    this.view.addChild(this.backdrop, title, this.hint, version);
 
     const row = MODES.length * BUTTON_WIDTH + (MODES.length - 1) * BUTTON_GAP;
     MODES.forEach((m, i) => {
@@ -151,19 +147,16 @@ export class TitleScene implements Scene {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("pointerdown", this.onPointerDown);
     this.backdrop.play();
-
-    void this.bgm
-      .load(BGM_URL)
-      .then(() => this.bgm.play())
-      .catch((err) => console.warn("[title] bgm unavailable", err));
+    startMenuBgm();
   }
 
   exit(): void {
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("pointerdown", this.onPointerDown);
     // No pause here: destroying the backdrop stops the clip, and the lobby —
-    // which shares it — resumes it from the same frame on the way in.
-    this.bgm.destroy();
+    // which shares it — resumes it from the same frame on the way in. The music
+    // is shared the same way and deliberately plays on into the lobby;
+    // gameplay is what stops it.
   }
 
   update(ticker: Ticker): void {

@@ -26,6 +26,7 @@ import {
   stepDifficulty,
   type DifficultyId,
 } from "../core/difficulty";
+import { menuBgm, startMenuBgm } from "../core/bgm";
 import { CodePad } from "./code-pad";
 import { drawAccentRing, drawPanel } from "./panel";
 import { makePill, type Pill } from "./pill-button";
@@ -117,20 +118,9 @@ export class LobbyScene implements Scene {
     );
     this.view.addChild(this.backdrop);
 
-    const heading = new Text({
-      text: "LOBBY",
-      style: {
-        fontFamily: "Arial",
-        fontSize: 64,
-        fontWeight: "900",
-        letterSpacing: 6,
-        fill: 0xffffff,
-      },
-    });
-    heading.anchor.set(0.5);
-    heading.position.set(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.13);
-    this.view.addChild(heading);
-
+    // No heading: the rows say what this screen is, and the title screen's
+    // music and video carry straight through, so naming it again reads as a
+    // hard cut the transition doesn't have.
     const panelX = (VIRTUAL_WIDTH - PANEL_WIDTH) / 2;
     const firstY = VIRTUAL_HEIGHT * 0.26;
 
@@ -595,6 +585,9 @@ export class LobbyScene implements Scene {
   }
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
+    // A keypress is a user gesture: if the player reached the lobby by mouse
+    // on a browser that never unlocked audio, this is where it starts.
+    void menuBgm().resume();
     if (e.repeat) return;
     if (this.startTimer !== null) return; // start already committed
     if (this.mode === "joining") {
@@ -785,6 +778,10 @@ export class LobbyScene implements Scene {
   enter(): void {
     window.addEventListener("keydown", this.onKeyDown);
     this.backdrop.play();
+    // Already playing if the player came from the title screen — this is the
+    // no-op case. It matters coming back from results, where gameplay stopped
+    // the menu music, and when autoplay was still locked on the title screen.
+    startMenuBgm();
     this.loadChartHash().catch((err: unknown) => {
       this.status = `chart load failed: ${String(err)}`;
       this.render();

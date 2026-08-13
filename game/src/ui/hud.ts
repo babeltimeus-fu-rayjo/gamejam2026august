@@ -8,25 +8,14 @@ import {
 } from "pixi.js";
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import type { Emitter } from "../core/events";
-import type { Judgement } from "../game/judge";
+import { TIER_COLOR, type FeedbackTier } from "../game/feedback";
 import { MAX_LIFE, type GameEvents } from "../game/score";
 
 // Regular Text (not BitmapText): the neon look needs canvas effects —
 // white core, colored stroke, zero-distance blurred dropShadow as the
 // glow halo. These are short strings that re-render only on change.
-const JUDGEMENT_GLOW: Readonly<Record<Judgement, number>> = {
-  perfect: 0xffd75c,
-  great: 0x5cd7ff,
-  good: 0x9f8fd8,
-  miss: 0xff5c5c,
-};
-
-// Top display tier above PERFECT: while a streak of 10+ combo holds,
-// every hit reads EXTRAORDINARY (the song's namesake); a miss resets
-// the combo to 0, so the tier must be re-earned. Pure presentation —
-// judgement windows and scoring are unchanged.
-const EXTRAORDINARY_COMBO = 10;
-const EXTRAORDINARY_GLOW = 0xffc94d;
+// Colours come from the shared judgement palette (game/feedback.ts), so the
+// popup and the lane's reaction zone light up in the same colour.
 
 /** Neon text: white-hot core, colored rim, colored glow halo. */
 function neonStyle(
@@ -44,15 +33,15 @@ function neonStyle(
 }
 
 // One prebuilt style per popup tier; swapping styles re-renders the text.
-const POPUP_STYLES: Readonly<Record<Judgement | "extraordinary", TextStyle>> = {
-  perfect: neonStyle(JUDGEMENT_GLOW.perfect, { fontSize: 52 }),
-  great: neonStyle(JUDGEMENT_GLOW.great, { fontSize: 52 }),
-  good: neonStyle(JUDGEMENT_GLOW.good, { fontSize: 52 }),
-  miss: neonStyle(JUDGEMENT_GLOW.miss, { fontSize: 52 }),
-  extraordinary: neonStyle(EXTRAORDINARY_GLOW, {
+const POPUP_STYLES: Readonly<Record<FeedbackTier, TextStyle>> = {
+  perfect: neonStyle(TIER_COLOR.perfect, { fontSize: 52 }),
+  great: neonStyle(TIER_COLOR.great, { fontSize: 52 }),
+  good: neonStyle(TIER_COLOR.good, { fontSize: 52 }),
+  miss: neonStyle(TIER_COLOR.miss, { fontSize: 52 }),
+  extraordinary: neonStyle(TIER_COLOR.extraordinary, {
     fontSize: 52,
     dropShadow: {
-      color: EXTRAORDINARY_GLOW,
+      color: TIER_COLOR.extraordinary,
       blur: 22,
       distance: 0,
       angle: 0,
@@ -67,14 +56,17 @@ const POPUP_POP_SCALE = 1.25;
 const EXTRAORDINARY_POP_SCALE = 1.5;
 
 // While the EXTRAORDINARY streak is alive, the screen frame throbs with
-// green light (edge vignette). A miss kills it immediately; it must be
-// re-earned with the combo.
+// light in the tier's own colour (edge vignette). A miss kills it
+// immediately; it must be re-earned with the combo.
 const VIGNETTE_DEPTH = 140;
-const VIGNETTE_RGB = "140, 220, 150";
+/** TIER_COLOR.extraordinary as rgb components, for the gradient's rgba(). */
+const VIGNETTE_RGB = "176, 92, 255";
 const VIGNETTE_ATTACK_MS = 120;
 const VIGNETTE_RELEASE_MS = 150;
-const VIGNETTE_BASE_ALPHA = 0.4;
-const VIGNETTE_PULSE_ALPHA = 0.25;
+// Lighter than the green frame it replaces: purple sits much closer to the
+// track's own colour, so the same alpha washed the lanes out.
+const VIGNETTE_BASE_ALPHA = 0.28;
+const VIGNETTE_PULSE_ALPHA = 0.18;
 const VIGNETTE_PULSE_HZ = 2.2;
 
 /** Gradient strip fading from the screen edge inward. */
@@ -274,7 +266,7 @@ export class Hud {
       this.lifeGroup,
     );
 
-    bus.on("judgement", ({ judgement, combo, score, life }) => {
+    bus.on("judgement", ({ tier, combo, score, life }) => {
       this.scoreText.text = `SCORE ${score}`;
       const fraction = life / MAX_LIFE;
       if (fraction !== this.lifeFraction) {
@@ -284,18 +276,14 @@ export class Hud {
       }
       this.comboText.text = combo >= 2 ? `${combo}` : "";
       this.comboLabel.visible = combo >= 2;
-      const extraordinary =
-        judgement !== "miss" && combo >= EXTRAORDINARY_COMBO;
-      this.popup.text = extraordinary
-        ? "EXTRAORDINARY"
-        : judgement.toUpperCase();
-      this.popup.style =
-        POPUP_STYLES[extraordinary ? "extraordinary" : judgement];
+      const extraordinary = tier === "extraordinary";
+      this.popup.text = tier.toUpperCase();
+      this.popup.style = POPUP_STYLES[tier];
       this.popupPopScale = extraordinary
         ? EXTRAORDINARY_POP_SCALE
         : POPUP_POP_SCALE;
       this.popupAgeMs = 0;
-      // Green frame light lives and dies with the streak: any miss (or
+      // The frame light lives and dies with the streak: any miss (or
       // dropping below the threshold) switches it off.
       this.vignetteOn = extraordinary;
     });

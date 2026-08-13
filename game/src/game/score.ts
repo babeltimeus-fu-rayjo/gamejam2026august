@@ -1,3 +1,4 @@
+import type { FeedbackTier } from "./feedback";
 import type { Judgement } from "./judge";
 
 /** Points per judgement (PLAN.md §5). Score is pure judgement points. */
@@ -33,6 +34,12 @@ export interface PlayResults {
 export type GameEvents = {
   judgement: {
     judgement: Judgement;
+    /**
+     * How the hit should *read* — the judgement, or "extraordinary" once the
+     * streak is up. Derived once by gameplay so the popup, the lane zone and
+     * the camera shake can never disagree about what the player just did.
+     */
+    tier: FeedbackTier;
     lane: number;
     /** Signed ms (negative = early); null for sweep misses. */
     deltaMs: number | null;
