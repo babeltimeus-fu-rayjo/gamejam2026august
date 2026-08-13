@@ -15,6 +15,7 @@ import { LobbyScene } from "./game/lobby";
 import { GameplayScene } from "./game/gameplay";
 import { ResultsScene } from "./game/results";
 import type { PlayResults } from "./game/score";
+import { preloadVideoBackdrop } from "./game/video-backdrop";
 
 // Async IIFE: top-level await breaks production builds on older Vite.
 (async () => {
@@ -62,7 +63,12 @@ import type { PlayResults } from "./game/score";
 
   const scenes = new SceneManager(sceneLayer);
 
+  // Pull the menus' background clip down while the title screen is up, so
+  // neither menu is waiting on it.
+  preloadVideoBackdrop();
+
   // Scene flow: title -> lobby -> gameplay -> results -> back to lobby.
+  // The lobby's MODE row also goes back to the title to re-pick.
   // Fresh instances per switch; wiring lives here so scenes stay ignorant
   // of each other.
   // Picked on the title screen / in the lobby and remembered so results can
@@ -81,6 +87,7 @@ import type { PlayResults } from "./game/score";
         difficulty,
         (d) => (difficulty = d),
         toGameplay,
+        toTitle,
       ),
     );
   const toTitle = (): void =>
