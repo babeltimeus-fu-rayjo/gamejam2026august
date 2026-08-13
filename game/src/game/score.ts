@@ -8,6 +8,22 @@ export const POINTS: Readonly<Record<Exclude<Judgement, "miss">, number>> = {
   good: 30,
 };
 
+/**
+ * Accuracy credit per judgement — deliberately *not* the point spread.
+ *
+ * Score is steep on purpose: precision should pay. Accuracy answers a
+ * different question ("how much of the chart did you actually play?"), so
+ * deriving it from score graded a run that hit every note in the GREAT
+ * window at 60 % — a D against bands (S 95 / A 90 / B 80 / C 65) that
+ * assume a slightly-off hit still counts for most of its note. These
+ * weights keep the two questions separate.
+ */
+const ACCURACY_WEIGHT: Readonly<Record<Exclude<Judgement, "miss">, number>> = {
+  perfect: 1,
+  great: 0.9,
+  good: 0.6,
+};
+
 // Life gauge — misses drain it, hits nurse it back a little. A long run
 // of misses empties the gauge and fails the song (gameplay watches
 // `dead`); recovery is slow enough that survival stays earned. How much
@@ -22,7 +38,7 @@ const LIFE_GAIN: Readonly<Record<Exclude<Judgement, "miss">, number>> = {
 export interface PlayResults {
   score: number;
   maxCombo: number;
-  /** 0..1 — earned points over the chart's maximum. */
+  /** 0..1 — earned accuracy credit over the chart's judgeable units. */
   accuracy: number;
   grade: string;
   counts: Record<Judgement, number>;
@@ -69,11 +85,14 @@ export class ScoreState {
     good: 0,
     miss: 0,
   };
+  /** Summed ACCURACY_WEIGHT over judged notes; the accuracy numerator. */
+  private accuracyEarned = 0;
 
   /**
    * @param totalNotes judgeable units in the chart — taps count once, holds
-   * twice (`noteWeight` in judge.ts). A hold's tail is worth full points, so
-   * the accuracy denominator has to include it or a clean run exceeds 100 %.
+   * twice (`noteWeight` in judge.ts). A hold's tail earns full points and
+   * full accuracy credit, so the denominator has to include it or a clean
+   * run exceeds 100 %.
    * @param lifeDrainMiss life lost per miss (difficulty dial); 0 disables
    * the gauge — life never moves, so `dead` can never fire.
    */
@@ -90,6 +109,7 @@ export class ScoreState {
       return;
     }
     this.score += POINTS[judgement];
+    this.accuracyEarned += ACCURACY_WEIGHT[judgement];
     this.life = Math.min(MAX_LIFE, this.life + LIFE_GAIN[judgement]);
     this.combo += 1;
     if (this.combo > this.maxCombo) this.maxCombo = this.combo;
@@ -112,7 +132,7 @@ export class ScoreState {
 
   results(): PlayResults {
     const accuracy =
-      this.totalNotes === 0 ? 1 : this.score / (100 * this.totalNotes);
+      this.totalNotes === 0 ? 1 : this.accuracyEarned / this.totalNotes;
     return {
       score: this.score,
       maxCombo: this.maxCombo,
