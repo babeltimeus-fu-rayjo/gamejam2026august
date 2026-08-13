@@ -19,11 +19,18 @@ import {
   normalizeRoomCode,
   ROOM_CODE_LENGTH,
 } from "../net/protocol";
+import {
+  DIFFICULTIES,
+  difficultyLabel,
+  stepDifficulty,
+  type DifficultyId,
+} from "../core/difficulty";
 import type { Scene } from "./scenes";
 
 const ROW_KEYS = [
   "MODE",
   "TRACK",
+  "DIFFICULTY",
   "AVATAR",
   "ROOM",
   "PLAYERS",
@@ -33,7 +40,9 @@ type RowKey = (typeof ROW_KEYS)[number];
 
 const PANEL_WIDTH = 760;
 const PANEL_HEIGHT = 56;
-const ROW_GAP = 18;
+// Tightened from 18 when the row count reached seven; any looser and the
+// bottom row runs off the 720-tall virtual canvas.
+const ROW_GAP = 14;
 
 /**
  * Lead-in before a networked start. Long enough to absorb one-way relay
@@ -72,6 +81,8 @@ export class LobbyScene implements Scene {
     private readonly gameMode: GameMode,
     character: CharacterDef,
     private readonly onCharacter: (character: CharacterDef) => void,
+    private difficulty: DifficultyId,
+    private readonly onDifficulty: (difficulty: DifficultyId) => void,
     private readonly onStart: () => void,
   ) {
     this.characterIndex = Math.max(
@@ -89,11 +100,11 @@ export class LobbyScene implements Scene {
       },
     });
     heading.anchor.set(0.5);
-    heading.position.set(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.2);
+    heading.position.set(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.13);
     this.view.addChild(heading);
 
     const panelX = (VIRTUAL_WIDTH - PANEL_WIDTH) / 2;
-    const firstY = VIRTUAL_HEIGHT * 0.36;
+    const firstY = VIRTUAL_HEIGHT * 0.26;
 
     ROW_KEYS.forEach((key, i) => {
       const y = firstY + i * (PANEL_HEIGHT + ROW_GAP);
@@ -117,7 +128,13 @@ export class LobbyScene implements Scene {
 
       const value = new Text({
         text: "",
-        style: { fontFamily: "Arial", fontSize: 22, fill: 0x9f8fd8 },
+        style: {
+          fontFamily: "Arial",
+          fontSize: 22,
+          // White so the difficulty row can recolour itself with `tint`,
+          // which costs nothing, instead of re-rendering the text canvas.
+          fill: key === "DIFFICULTY" ? 0xffffff : 0x9f8fd8,
+        },
       });
       value.anchor.set(0, 0.5);
       value.position.set(panelX + 200, y + PANEL_HEIGHT / 2);
@@ -136,11 +153,24 @@ export class LobbyScene implements Scene {
     this.render();
   }
 
-  /** Hash the chart so peers can verify they're playing the same notes. */
+  /**
+   * Hash the chart so peers can verify they're on the same track and build.
+   * Difficulty is *not* in the hash — see HelloMsg.difficulty: players pick
+   * independently, and mirror play never puts note data on the wire.
+   */
   private async loadChartHash(): Promise<void> {
     const res = await fetch(`${SONG_DIR}chart.json`);
     if (!res.ok) throw new Error(`chart fetch failed: ${res.status}`);
     this.chartHashValue = chartHash(await res.text());
+    this.render();
+  }
+
+  private cycleDifficulty(step: number): void {
+    const next = stepDifficulty(this.difficulty, step);
+    if (next === this.difficulty) return;
+    this.difficulty = next;
+    this.onDifficulty(next);
+    activeRoom()?.setDifficulty(next);
     this.render();
   }
 
@@ -157,7 +187,7 @@ export class LobbyScene implements Scene {
         this.render();
       }),
       room.bus.on("mismatch", ({ theirs }) => {
-        this.status = `chart mismatch (peer ${theirs}) — same build required`;
+        this.status = `chart mismatch (peer ${theirs}) — same track and build required`;
         this.render();
       }),
       room.bus.on("start", (msg) => {
@@ -191,6 +221,7 @@ export class LobbyScene implements Scene {
       name: "player",
       chartId: SONG_DIR,
       chartHash: this.chartHashValue,
+      difficulty: this.difficulty,
     });
     this.mode = "room";
     this.peers = [];
@@ -297,14 +328,26 @@ export class LobbyScene implements Scene {
       this.handleCodeEntry(e);
       return;
     }
-    // Avatar pick is local-only, so it's allowed even inside a room.
-    // "Left"/"Right" are legacy key names (pre-standard browsers/webviews).
+    // Both pickers sit ahead of the solo any-key start, or setting one up
+    // would launch the run. Avatar takes the horizontal axis and difficulty
+    // the vertical; both are local-only, so they work inside a room too.
+    // "Left"/"Up"/… are legacy key names (pre-standard browsers/webviews).
     if (e.key === "ArrowLeft" || e.key === "Left") {
       this.cycleCharacter(-1);
       return;
     }
     if (e.key === "ArrowRight" || e.key === "Right") {
       this.cycleCharacter(1);
+      return;
+    }
+    // Up is the *easier* direction: the list reads easiest-first, and a row
+    // of difficulties climbing away from you is the wrong mental model.
+    if (e.key === "ArrowUp" || e.key === "Up") {
+      this.cycleDifficulty(-1);
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "Down") {
+      this.cycleDifficulty(1);
       return;
     }
     const key = e.key.toLowerCase();
@@ -374,20 +417,44 @@ export class LobbyScene implements Scene {
       : "Single — solo run";
   }
 
+  private difficultyValue(): string {
+    const d = DIFFICULTIES[this.difficulty];
+    // No "(↑/↓ to change)" tail: with the blurb it overruns the panel, and
+    // the AVATAR row directly below spells the arrow idiom out.
+    return `▲  ${d.label}  ▼   ${d.blurb}`;
+  }
+
+  /**
+   * Each player's own difficulty is shown beside their name: a mixed room is
+   * allowed, so the disagreement has to be visible rather than blocked.
+   */
   private playersValue(): string {
     const room = activeRoom();
     if (this.mode !== "room" || !room) return "solo play";
-    const you = `you ${room.ready ? "✓ ready" : "· waiting"}`;
+    const label = DIFFICULTIES[this.difficulty].label;
+    const you = `you [${label}] ${room.ready ? "✓ ready" : "· waiting"}`;
     if (this.peers.length === 0) return `${you}   (no peers yet)`;
     const others = this.peers
-      .map((p) => `${p.name} ${p.ready ? "✓ ready" : "· waiting"}`)
+      .map(
+        (p) =>
+          `${p.name} [${difficultyLabel(p.difficulty)}] ${p.ready ? "✓ ready" : "· waiting"}`,
+      )
       .join("   ");
     return `${you}   ${others}`;
   }
 
   private startValue(): string {
     if (this.startingInMs !== null) return "starting…";
-    if (this.mode === "room") return "[R] ready, Enter to start once all ready";
+    if (this.mode === "room") {
+      // Raw score scales with note count, so say up front what a mixed room
+      // is actually settled on before anyone plays for the wrong number.
+      const mixed = this.peers.some(
+        (p) => p.difficulty !== null && p.difficulty !== this.difficulty,
+      );
+      return mixed
+        ? "[R] ready, Enter to start — mixed room, ranked on accuracy"
+        : "[R] ready, Enter to start once all ready";
+    }
     return this.gameMode === "battle" ? "press Enter" : "press any key";
   }
 
@@ -398,6 +465,8 @@ export class LobbyScene implements Scene {
   private render(): void {
     this.setValue("MODE", this.modeValue());
     this.setValue("TRACK", "Demo Track — chart select lands in M3");
+    this.setValue("DIFFICULTY", this.difficultyValue());
+    this.values.DIFFICULTY.tint = DIFFICULTIES[this.difficulty].color;
     this.setValue("AVATAR", this.avatarValue());
     this.setValue("ROOM", this.roomValue());
     this.setValue("PLAYERS", this.playersValue());
