@@ -10,7 +10,8 @@
     "dev": "vite"
   },
   "dependencies": {
-    "pixi.js": "^8.8.1"
+    "pixi.js": "^8.8.1",
+    "trystero": "^0.25.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",
