@@ -7,6 +7,9 @@ import { applyDifficulty, type Difficulty } from "../core/difficulty";
 import { AudioClock } from "../core/clock";
 import { Emitter } from "../core/events";
 import { LaneInput } from "../core/input";
+import { GameplayRelay } from "../net/relay";
+import { activeRoom } from "../net/room";
+import { GhostHud } from "../ui/ghost-hud";
 import { Hud } from "../ui/hud";
 import { Judge, noteWeight, type JudgedNote, type Resolution } from "./judge";
 import { ScoreState, type GameEvents, type PlayResults } from "./score";
@@ -44,6 +47,13 @@ export class GameplayScene implements Scene {
     onPress: (lane) => this.onPress(lane),
     onRelease: (lane) => this.onRelease(lane),
   });
+  // Null in single play: the whole net layer stays dormant unless the lobby
+  // opened a room.
+  private readonly room = activeRoom();
+  private readonly ghost = new GhostHud(this.room);
+  private readonly relay = this.room
+    ? new GameplayRelay(this.room, this.bus, () => this.clock.songTime())
+    : null;
   private readonly status: Text;
 
   private readonly pauseLabel: Text;
@@ -134,6 +144,7 @@ export class GameplayScene implements Scene {
       this.avatar.view,
       this.track.view,
       this.hud.view,
+      this.ghost.view,
       this.status,
       this.pauseOverlay,
       pauseButton.view,
@@ -271,7 +282,9 @@ export class GameplayScene implements Scene {
   private finish(): void {
     if (this.finished) return;
     this.finished = true;
-    this.onFinish(this.score?.results() ?? new ScoreState(0).results());
+    const results = this.score?.results() ?? new ScoreState(0).results();
+    this.relay?.finish(results, this.difficulty.id);
+    this.onFinish(results);
   }
 
   enter(): void {
@@ -285,6 +298,8 @@ export class GameplayScene implements Scene {
 
   exit(): void {
     this.avatar.dispose();
+    this.ghost.dispose();
+    this.relay?.dispose();
     this.input.detach();
     window.removeEventListener("keydown", this.onAnyKey);
     this.clock.destroy();
@@ -300,6 +315,7 @@ export class GameplayScene implements Scene {
 
     this.track.update(ticker);
     this.hud.update(ticker);
+    this.ghost.update(ticker);
     this.avatar.update(ticker);
 
     if (!this.chart || !this.judge || !this.score) return;
@@ -323,6 +339,14 @@ export class GameplayScene implements Scene {
 
     this.track.sync(this.notes, t);
 
+    this.relay?.tick(ticker.deltaMS, {
+      combo: this.score.combo,
+      score: this.score.score,
+      judged: this.score.judgedCount,
+    });
+
+    // main's count: totalNotes covers holds, which contribute more than one
+    // judgement each, so notes.length would finish the song early.
     const allJudged = this.score.judgedCount === this.score.totalNotes;
     const pastEnd =
       t > this.lastNoteT + OUTRO_S || t > this.chart.song.duration + 1;
