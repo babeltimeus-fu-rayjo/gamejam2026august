@@ -1,10 +1,12 @@
 import { Container, Graphics, Rectangle, Text, Ticker } from "pixi.js";
 import { CHARACTERS, type CharacterDef } from "../art/characters";
 import {
-  SONG_DIR,
+  songDir,
+  SONGS,
   VIRTUAL_HEIGHT,
   VIRTUAL_WIDTH,
   type GameMode,
+  type SongDef,
 } from "../config";
 import {
   activeRoom,
@@ -102,6 +104,7 @@ export class LobbyScene implements Scene {
   private started = false;
   private elapsed = 0;
   private characterIndex: number;
+  private songIndex: number;
 
   constructor(
     private readonly gameMode: GameMode,
@@ -109,12 +112,18 @@ export class LobbyScene implements Scene {
     private readonly onCharacter: (character: CharacterDef) => void,
     private difficulty: DifficultyId,
     private readonly onDifficulty: (difficulty: DifficultyId) => void,
+    song: SongDef,
+    private readonly onSong: (song: SongDef) => void,
     private readonly onStart: () => void,
     private readonly onBack: () => void,
   ) {
     this.characterIndex = Math.max(
       0,
       CHARACTERS.findIndex((c) => c.id === character.id),
+    );
+    this.songIndex = Math.max(
+      0,
+      SONGS.findIndex((s) => s.id === song.id),
     );
     this.view.addChild(this.backdrop);
 
@@ -257,12 +266,18 @@ export class LobbyScene implements Scene {
     });
     value.anchor.set(0, 0.5);
     // Spinner rows carry a pair of tap arrows ahead of the value.
-    const spinner = key === "AVATAR" || key === "DIFFICULTY";
+    const spinner = key === "AVATAR" || key === "DIFFICULTY" || key === "TRACK";
     value.position.set(spinner ? 292 : 200, PANEL_HEIGHT / 2);
 
     this.values[key] = value;
     row.addChild(panel, label, value);
 
+    if (key === "TRACK") {
+      row.addChild(
+        this.makeArrow("◄", 212, () => this.cycleSong(-1)),
+        this.makeArrow("►", 252, () => this.cycleSong(1)),
+      );
+    }
     if (key === "AVATAR") {
       row.addChild(
         this.makeArrow("◄", 212, () => this.cycleCharacter(-1)),
@@ -419,9 +434,31 @@ export class LobbyScene implements Scene {
    * independently, and mirror play never puts note data on the wire.
    */
   private async loadChartHash(): Promise<void> {
-    const res = await fetch(`${SONG_DIR}chart.json`);
+    const id = SONGS[this.songIndex].id;
+    const res = await fetch(`${songDir(id)}chart.json`);
     if (!res.ok) throw new Error(`chart fetch failed: ${res.status}`);
-    this.chartHashValue = chartHash(await res.text());
+    const hash = chartHash(await res.text());
+    // Re-picked while the fetch was in flight: this hash is for the wrong
+    // song, and the newer cycleSong already started the right fetch.
+    if (id !== SONGS[this.songIndex].id) return;
+    this.chartHashValue = hash;
+    // In a room, the peer's start-gate compares hashes; tell them what we
+    // switched to. No-op when the identity already matches (scene re-entry).
+    activeRoom()?.setChart(songDir(id), hash);
+    this.render();
+  }
+
+  private cycleSong(step: number): void {
+    const n = SONGS.length;
+    this.songIndex = (this.songIndex + step + n) % n;
+    this.onSong(SONGS[this.songIndex]);
+    // Stale until the new chart is fetched; blocks room entry and (via the
+    // peer's hash check) a networked start in the meantime.
+    this.chartHashValue = null;
+    this.loadChartHash().catch((err: unknown) => {
+      this.status = `chart load failed: ${String(err)}`;
+      this.render();
+    });
     this.render();
   }
 
@@ -479,7 +516,7 @@ export class LobbyScene implements Scene {
     this.unsubscribeAll();
     await joinNetRoom(code, {
       name: playerName(),
-      chartId: SONG_DIR,
+      chartId: songDir(SONGS[this.songIndex].id),
       chartHash: this.chartHashValue,
       difficulty: this.difficulty,
       character: CHARACTERS[this.characterIndex].id,
@@ -616,6 +653,16 @@ export class LobbyScene implements Scene {
       this.cycleDifficulty(1);
       return;
     }
+    // Track select: the arrows are spoken for, so the brackets step the song.
+    // Handled ahead of the solo any-key start like every other picker.
+    if (e.key === "[") {
+      this.cycleSong(-1);
+      return;
+    }
+    if (e.key === "]") {
+      this.cycleSong(1);
+      return;
+    }
     const key = e.key.toLowerCase();
 
     if (this.mode === "solo") {
@@ -744,9 +791,13 @@ export class LobbyScene implements Scene {
     return `${CHARACTERS[this.characterIndex].name}   (tap ◄ ► or ←/→)`;
   }
 
+  private trackValue(): string {
+    return `${SONGS[this.songIndex].title}   (tap ◄ ► or [ ])`;
+  }
+
   private render(): void {
     this.setValue("MODE", this.modeValue());
-    this.setValue("TRACK", "Demo Track — chart select lands in M3");
+    this.setValue("TRACK", this.trackValue());
     this.setValue("DIFFICULTY", this.difficultyValue());
     this.values.DIFFICULTY.tint = DIFFICULTIES[this.difficulty].color;
     this.setValue("AVATAR", this.avatarValue());
