@@ -16,7 +16,7 @@ const URL = `${import.meta.env.BASE_URL}video/lobby-bg.mp4`;
  * Muted so the clip's own audio track never plays — the menus' music is the
  * BGM's job — and because browsers only autoplay muted video. `updateFPS`
  * matches the source's 30fps: re-uploading the frame more often than the video
- * produces one is wasted bandwidth on a 2516x1080 texture.
+ * produces one is wasted bandwidth on a 1920x1080 texture.
  */
 const VIDEO_OPTIONS = {
   autoPlay: true,
@@ -27,9 +27,9 @@ const VIDEO_OPTIONS = {
 };
 
 /**
- * Register the clip and start pulling it down. Called at boot so the ~27MB file
- * is warm by the time anyone reaches the lobby; without it the first visit
- * shows a flat fill for as long as the download takes.
+ * Register the clip and start pulling it down. Called at boot so the ~9MB file
+ * is warm by the time anyone reaches a menu; without it the first visit shows a
+ * flat fill for as long as the download takes.
  */
 export function preloadVideoBackdrop(): void {
   Assets.add({ alias: ALIAS, src: URL, data: VIDEO_OPTIONS });
@@ -41,9 +41,10 @@ export function preloadVideoBackdrop(): void {
 /**
  * Fullscreen looping video background.
  *
- * The clip is wider than the 16:9 virtual stage, so it's scaled to cover and
- * centred — the overhang is clipped by a mask rather than left to paint into
- * the letterbox bars outside the virtual frame.
+ * Scaled to cover and centred, with a mask over the virtual frame. The clip is
+ * 16:9 like the stage, so today there is nothing to clip; the cover-and-mask
+ * pair is what keeps a differently-shaped replacement from letterboxing or
+ * painting out into the bars beside the frame.
  *
  * The texture lives in the Assets cache and is deliberately *not* destroyed
  * with the scene: it's shared with every later lobby visit. Playback is paused
