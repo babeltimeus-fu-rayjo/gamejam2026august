@@ -7,9 +7,6 @@ import { ReactionController } from "./reactions";
 
 /** Gutter centers: track spans x 440..840 on the 1280-wide virtual canvas. */
 const SIDE_X: Record<"left" | "right", number> = { left: 220, right: 1060 };
-/** Feet sit slightly below the frame (kind-bell BASE_Y) so they never float. */
-const BASE_Y = VIRTUAL_HEIGHT + 8;
-
 const DEFAULT_HEIGHT = 460;
 const BREATHE_PERIOD_MS = 2100;
 const BREATHE_AMP_PX = 4;
@@ -54,9 +51,11 @@ export class Avatar {
 
   constructor(opts: AvatarOptions) {
     this.character = opts.character;
-    this.baseScale =
-      (opts.height ?? DEFAULT_HEIGHT) / opts.character.sourceSize.h;
-    this.view.position.set(SIDE_X[opts.side], BASE_Y);
+    const height = opts.height ?? DEFAULT_HEIGHT;
+    this.baseScale = height / opts.character.sourceSize.h;
+    // Vertically centered (anchor is at the feet), which lands the feet on
+    // the illustrated stage floor so the character reads as standing on it.
+    this.view.position.set(SIDE_X[opts.side], (VIRTUAL_HEIGHT + height) / 2);
     this.unsubscribe = opts.bus.on("judgement", (e) => {
       this.controller.onJudgement(e.judgement, e.combo);
     });
