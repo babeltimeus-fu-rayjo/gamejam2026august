@@ -1,6 +1,7 @@
 import { Container, Graphics, Text, Ticker } from "pixi.js";
 import { Avatar } from "../art/avatar";
 import type { CharacterDef } from "../art/characters";
+import { Stage } from "../art/stage";
 import { SONG_DIR, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { parseChart, type Chart } from "../core/beatmap";
 import { applyDifficulty, type Difficulty } from "../core/difficulty";
@@ -65,6 +66,8 @@ export class GameplayScene implements Scene {
       // Straight to the hardware audio clock — no frame-timer round trip.
       this.clock.start(inMs / 1000);
     }) ?? null;
+  // Illustrated live-house backdrop + reactive LED screen (art/stage.ts).
+  private readonly stage: Stage;
   private readonly status: Text;
 
   private readonly pauseLabel: Text;
@@ -97,15 +100,8 @@ export class GameplayScene implements Scene {
     // rather than a field initializer.
     this.track = new Track(difficulty.scrollSpeed);
 
-    // Placeholder art layer: fills the screen BEHIND the semi-transparent
-    // track (real reactive stage lands in M4).
-    const art = new Graphics()
-      .circle(VIRTUAL_WIDTH * 0.3, VIRTUAL_HEIGHT * 0.35, 220)
-      .fill({ color: 0x3a2f5c, alpha: 0.55 })
-      .circle(VIRTUAL_WIDTH * 0.68, VIRTUAL_HEIGHT * 0.55, 300)
-      .fill({ color: 0x24406b, alpha: 0.45 })
-      .circle(VIRTUAL_WIDTH * 0.85, VIRTUAL_HEIGHT * 0.2, 140)
-      .fill({ color: 0x5a2f4e, alpha: 0.55 });
+    // The screen's mirror shows the same character the player picked.
+    this.stage = new Stage({ bus: this.bus, character });
 
     this.status = new Text({
       text: "loading chart…",
@@ -154,7 +150,7 @@ export class GameplayScene implements Scene {
     );
 
     this.view.addChild(
-      art,
+      this.stage.view,
       this.avatar.view,
       this.track.view,
       this.hud.view,
@@ -250,6 +246,7 @@ export class GameplayScene implements Scene {
     this.score = new ScoreState(
       this.notes.reduce((sum, n) => sum + noteWeight(n), 0),
     );
+    this.stage.setBeat(chart.bpm, chart.offset);
     await this.clock.load(SONG_DIR + chart.song.audioFile);
   }
 
@@ -365,6 +362,7 @@ export class GameplayScene implements Scene {
   }
 
   exit(): void {
+    this.stage.dispose();
     this.avatar.dispose();
     this.ghost.dispose();
     this.relay?.dispose();
@@ -386,6 +384,10 @@ export class GameplayScene implements Scene {
     this.hud.update(ticker);
     this.ghost.update(ticker);
     this.avatar.update(ticker);
+    this.stage.update(
+      ticker,
+      this.clock.started ? this.clock.songTime() : null,
+    );
 
     if (!this.chart || !this.judge || !this.score) return;
     if (!this.clock.loaded) return;

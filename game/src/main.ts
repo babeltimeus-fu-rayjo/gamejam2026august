@@ -1,6 +1,7 @@
 import { Application, Container, Graphics } from "pixi.js";
 import { Avatar } from "./art/avatar";
 import { CHARACTERS, TEAL, type CharacterDef } from "./art/characters";
+import { Stage } from "./art/stage";
 import {
   BACKDROP_COLOR,
   LETTERBOX_COLOR,
@@ -30,6 +31,7 @@ import { preloadVideoBackdrop } from "./game/video-backdrop";
   // Warm the pose textures while the player is on the title screen; the
   // Assets cache persists across scene switches, so this happens once.
   for (const c of CHARACTERS) void Avatar.preload(c);
+  void Stage.preload();
 
   // Everything renders inside `root`, which is designed at 1280x720 virtual
   // coordinates and uniformly scaled to fit the window (letterboxed).
