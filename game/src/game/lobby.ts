@@ -12,6 +12,7 @@ import {
   leaveNetRoom,
   type RemotePlayer,
 } from "../net/room";
+import { playerName } from "../net/identity";
 import {
   chartHash,
   isCompleteRoomCode,
@@ -218,7 +219,7 @@ export class LobbyScene implements Scene {
     }
     this.unsubscribeAll();
     await joinNetRoom(code, {
-      name: "player",
+      name: playerName(),
       chartId: SONG_DIR,
       chartHash: this.chartHashValue,
       difficulty: this.difficulty,

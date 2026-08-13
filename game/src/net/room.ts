@@ -29,6 +29,15 @@ const APP_ID = "babeltime-gamejam2026-rhythm";
 /** How long peers get to appear before we call a room empty, ms. */
 const LONELY_AFTER_MS = 8000;
 
+/**
+ * After this, a still-empty room is worth explaining rather than just
+ * reporting. We can't tell "nobody joined" from "the peer connected to the
+ * relay but the direct connection never formed" — the ~10–15% of NAT
+ * combinations that need a TURN relay (PLAN.md §8, out of jam scope) look
+ * identical from here — so the message has to cover both.
+ */
+const UNREACHABLE_AFTER_MS = 25000;
+
 export interface RemotePlayer {
   id: string;
   name: string;
@@ -86,7 +95,7 @@ export class NetRoom {
   private readonly sendHitMsg: (msg: HitMsg) => void;
   private readonly sendStateMsg: (msg: StateMsg) => void;
   private readonly sendFinishMsg: (msg: FinishMsg) => void;
-  private lonelyTimer: number | null = null;
+  private readonly timers: number[] = [];
 
   private localReady = false;
   private left = false;
@@ -181,11 +190,21 @@ export class NetRoom {
     };
 
     this.bus.emit("status", "waiting for a peer…");
-    this.lonelyTimer = window.setTimeout(() => {
-      if (this.players.size === 0 && !this.left) {
-        this.bus.emit("status", "no one here yet — share the code");
-      }
-    }, LONELY_AFTER_MS);
+    this.timers.push(
+      window.setTimeout(() => {
+        if (this.players.size === 0 && !this.left) {
+          this.bus.emit("status", "no one here yet — share the code");
+        }
+      }, LONELY_AFTER_MS),
+      window.setTimeout(() => {
+        if (this.players.size === 0 && !this.left) {
+          this.bus.emit(
+            "status",
+            "still alone — check the code, or try both players on one network",
+          );
+        }
+      }, UNREACHABLE_AFTER_MS),
+    );
   }
 
   private helloMsg(): HelloMsg {
@@ -331,7 +350,8 @@ export class NetRoom {
   async leave(): Promise<void> {
     if (this.left) return;
     this.left = true;
-    if (this.lonelyTimer !== null) window.clearTimeout(this.lonelyTimer);
+    for (const timer of this.timers) window.clearTimeout(timer);
+    this.timers.length = 0;
     this.players.clear();
     await this.room.leave();
   }
@@ -346,11 +366,26 @@ export function activeRoom(): NetRoom | null {
   return active;
 }
 
+// Closing the tab must announce the departure, otherwise the opponent stares
+// at a live-looking ghost until the relay times the peer out. pagehide fires
+// on close, navigation, and mobile backgrounding, where beforeunload doesn't.
+// leave() is best-effort here: the browser won't wait for it.
+let unloadHookInstalled = false;
+
+function installUnloadHook(): void {
+  if (unloadHookInstalled) return;
+  unloadHookInstalled = true;
+  window.addEventListener("pagehide", () => {
+    void active?.leave();
+  });
+}
+
 export async function joinNetRoom(
   code: string,
   identity: RoomIdentity,
 ): Promise<NetRoom> {
   await leaveNetRoom();
+  installUnloadHook();
   active = new NetRoom(code, identity);
   return active;
 }
