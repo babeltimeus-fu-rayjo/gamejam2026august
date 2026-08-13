@@ -16,7 +16,12 @@ const PANEL_WIDTH = 300;
 const PANEL_HEIGHT = 92;
 const MARGIN = 24;
 const PANEL_X = VIRTUAL_WIDTH - MARGIN - PANEL_WIDTH;
-const PANEL_Y = 20;
+/**
+ * Below the life gauge, which owns the top-right corner (x 1016–1256, label
+ * from y~22, bar through y=58). The opponent readout is secondary to your own
+ * survival, so it yields the corner rather than competing for it.
+ */
+const PANEL_Y = 72;
 const PAD = 14;
 
 /** Roughly two-thirds the player HUD's type sizes — present, not competing. */
