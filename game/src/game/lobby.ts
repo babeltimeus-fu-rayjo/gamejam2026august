@@ -90,6 +90,14 @@ export class LobbyScene implements Scene {
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (e.repeat) return;
+    // Bare modifiers don't count as "any key" — Shift alone must not
+    // launch the game. Nor do events with no key name (some browsers
+    // and input tools emit key "" or "Unidentified").
+    if (
+      ["Shift", "Control", "Alt", "Meta", "Unidentified", ""].includes(e.key)
+    ) {
+      return;
+    }
     this.onStart();
   };
 
