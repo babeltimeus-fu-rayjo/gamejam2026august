@@ -1,6 +1,6 @@
 import { Container, Graphics, Text, Ticker } from "pixi.js";
 import { Avatar } from "../art/avatar";
-import type { CharacterDef } from "../art/characters";
+import { CHARACTERS, type CharacterDef } from "../art/characters";
 import { Stage } from "../art/stage";
 import { SONG_DIR, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { parseChart, type Chart } from "../core/beatmap";
@@ -9,6 +9,7 @@ import { stopMenuBgm } from "../core/bgm";
 import { AudioClock } from "../core/clock";
 import { Emitter } from "../core/events";
 import { LaneInput } from "../core/input";
+import { Sfx } from "../core/sfx";
 import { GameplayRelay } from "../net/relay";
 import { activeRoom } from "../net/room";
 import { GhostHud } from "../ui/ghost-hud";
@@ -20,8 +21,20 @@ import {
   tierFor,
   type FeedbackTier,
 } from "./feedback";
-import { Judge, noteWeight, type JudgedNote, type Resolution } from "./judge";
-import { ScoreState, type GameEvents, type PlayResults } from "./score";
+import {
+  isHold,
+  Judge,
+  noteWeight,
+  type JudgedNote,
+  type Resolution,
+} from "./judge";
+import {
+  MAX_LIFE,
+  ScoreState,
+  type GameEvents,
+  type PlayResults,
+} from "./score";
+import { TouchLaneOverlay } from "./touch-lanes";
 import { Track } from "./track";
 import type { Scene } from "./scenes";
 
@@ -51,15 +64,27 @@ export class GameplayScene implements Scene {
   readonly view = new Container();
 
   private readonly clock = new AudioClock();
+  private readonly sfx = new Sfx(this.clock.context);
   private readonly bus = new Emitter<GameEvents>();
   private readonly track: Track;
-  private readonly hud = new Hud(this.bus);
-  // Player sits right of the track; a future multiplayer opponent takes
-  // side: "left" with its own bus (see PLAN.md M4/M6).
+  private readonly hud: Hud;
+  // Player sits right of the track; in a room the opponent's avatar takes
+  // side: "left", driven by wire hits through its own bus.
   private readonly avatar: Avatar;
+  private readonly opponentBus = new Emitter<GameEvents>();
+  private readonly opponentAvatar: Avatar | null;
+  private readonly offOpponentHit: (() => void) | null;
+  // Keys and fingers are peer sources feeding one per-lane refcount: the
+  // judge sees a press on 0→1 and a release on 1→0, so key-D plus a finger
+  // on lane 0 doesn't drop a live hold when either one lifts.
+  private readonly laneHolds = [0, 0, 0, 0];
   private readonly input = new LaneInput({
-    onPress: (lane) => this.onPress(lane),
-    onRelease: (lane) => this.onRelease(lane),
+    onPress: (lane) => this.pressLane(lane),
+    onRelease: (lane) => this.releaseLane(lane),
+  });
+  private readonly touchLanes = new TouchLaneOverlay({
+    onPress: (lane) => this.pressLane(lane),
+    onRelease: (lane) => this.releaseLane(lane),
   });
   // Null in single play: the whole net layer stays dormant unless the lobby
   // opened a room.
@@ -77,6 +102,8 @@ export class GameplayScene implements Scene {
   // Illustrated live-house backdrop + reactive LED screen (art/stage.ts).
   private readonly stage: Stage;
   private readonly status: Text;
+  /** Song title + difficulty, pinned top-center for the whole run. */
+  private readonly songTitle: Text;
 
   private readonly pauseLabel: Text;
   private readonly pauseOverlay: Container;
@@ -107,13 +134,64 @@ export class GameplayScene implements Scene {
       character,
       bus: this.bus,
     });
+    // Opponent avatar: the peer's chosen character stands across the stage
+    // and replays their wire hits. HitMsg carries every judgement (misses
+    // included), so ReactionController works unchanged from remote data.
+    const peer = this.room?.peers[0] ?? null;
+    this.opponentAvatar = peer
+      ? new Avatar({
+          side: "left",
+          character:
+            CHARACTERS.find((c) => c.id === peer.character) ?? CHARACTERS[0],
+          bus: this.opponentBus,
+        })
+      : null;
+    this.offOpponentHit =
+      this.room && peer
+        ? this.room.bus.on("hit", ({ msg }) => {
+            this.opponentBus.emit("judgement", {
+              judgement: msg.judgement,
+              // Same derivation the local side uses, from their wire combo.
+              tier: tierFor(msg.judgement, msg.combo),
+              lane: msg.lane,
+              deltaMs: null,
+              combo: msg.combo,
+              score: msg.score,
+              // Opponent life isn't on the wire; the avatar ignores it.
+              life: MAX_LIFE,
+            });
+          })
+        : null;
     // Scroll speed is the difficulty's headline dial, so the track can only
     // be built once the difficulty is in hand — hence the constructor body
-    // rather than a field initializer.
+    // rather than a field initializer. Same for the HUD's life toggle.
     this.track = new Track(difficulty.scrollSpeed);
+    this.hud = new Hud(this.bus, { showLife: difficulty.lifeDrainMiss > 0 });
 
     // The screen's mirror shows the same character the player picked.
     this.stage = new Stage({ bus: this.bus, character });
+
+    // Top-center, between the corner buttons and the life gauge; filled in
+    // once the chart names the song.
+    this.songTitle = new Text({
+      text: "",
+      style: {
+        fontFamily: "Arial",
+        fontSize: 24,
+        fontWeight: "700",
+        letterSpacing: 2,
+        fill: 0xcfc4f2,
+        dropShadow: {
+          color: 0x9678c8,
+          blur: 10,
+          distance: 0,
+          angle: 0,
+          alpha: 0.8,
+        },
+      },
+    });
+    this.songTitle.anchor.set(0.5, 0);
+    this.songTitle.position.set(VIRTUAL_WIDTH / 2, 20);
 
     this.status = new Text({
       text: "loading chart…",
@@ -164,9 +242,14 @@ export class GameplayScene implements Scene {
     this.view.addChild(
       this.stage.view,
       this.avatar.view,
+      ...(this.opponentAvatar ? [this.opponentAvatar.view] : []),
       this.track.view,
+      // Invisible touch columns over the track; the corner buttons are added
+      // later (= above), so they still win their own taps.
+      this.touchLanes.view,
       this.hud.view,
       this.ghost.view,
+      this.songTitle,
       this.status,
       this.pauseOverlay,
       pauseButton.view,
@@ -214,9 +297,11 @@ export class GameplayScene implements Scene {
     this.pauseOverlay.visible = this.paused;
     this.pauseLabel.text = this.paused ? "RESUME" : "PAUSE";
     if (this.paused) {
-      // Lift held keys before freezing: a hold left live across a pause
-      // would complete itself the instant the clock jumps past its end.
+      // Lift held keys and fingers before freezing: a hold left live across
+      // a pause would complete itself the instant the clock jumps past its
+      // end.
       this.input.releaseAll();
+      this.touchLanes.releaseAll();
       void this.clock.pause();
     } else {
       void this.clock.resume();
@@ -257,7 +342,9 @@ export class GameplayScene implements Scene {
     this.judge = new Judge(this.notes, this.difficulty.windowScale);
     this.score = new ScoreState(
       this.notes.reduce((sum, n) => sum + noteWeight(n), 0),
+      this.difficulty.lifeDrainMiss,
     );
+    this.songTitle.text = `${chart.song.title}   ·   ${this.difficulty.label}`;
     this.stage.setBeat(chart.bpm, chart.offset);
     await this.clock.load(SONG_DIR + chart.song.audioFile);
   }
@@ -267,6 +354,13 @@ export class GameplayScene implements Scene {
     // `finished` also covers death mid-sweep: once the gauge empties, the
     // remaining resolutions of that frame must not touch the dead scene.
     if (!this.score || this.finished) return;
+    if (r.judgement !== "miss") {
+      // Audible confirmation: tap tick, hold latch, or hold-complete chime.
+      // Misses stay silent — the song dropping out IS the miss feedback.
+      if (r.part === "tail") this.sfx.holdRelease();
+      else if (isHold(r.note)) this.sfx.holdStart(r.judgement);
+      else this.sfx.hit(r.judgement);
+    }
     // Scoring first: the tier reads the combo this note just produced, so an
     // EXTRAORDINARY shows on the hit that earns it, not on the next one.
     this.score.apply(r.judgement);
@@ -302,6 +396,19 @@ export class GameplayScene implements Scene {
     this.shakeAgeMs = 0;
   }
 
+  private pressLane(lane: number): void {
+    this.laneHolds[lane] += 1;
+    if (this.laneHolds[lane] === 1) this.onPress(lane);
+    // A redundant source still deserves receptor feedback.
+    else if (!this.paused) this.track.flash(lane);
+  }
+
+  private releaseLane(lane: number): void {
+    if (this.laneHolds[lane] === 0) return;
+    this.laneHolds[lane] -= 1;
+    if (this.laneHolds[lane] === 0) this.onRelease(lane);
+  }
+
   private onPress(lane: number): void {
     if (this.paused) return;
     void this.clock.resume();
@@ -329,6 +436,12 @@ export class GameplayScene implements Scene {
       return;
     }
     // While paused, a stray key must not unlock/resume the audio context.
+    if (this.paused) return;
+    void this.clock.resume();
+  };
+
+  /** Touch twin of the any-key audio unlock (title.ts does the same). */
+  private readonly onAnyPointer = (): void => {
     if (this.paused) return;
     void this.clock.resume();
   };
@@ -396,6 +509,8 @@ export class GameplayScene implements Scene {
     stopMenuBgm();
     this.input.attach();
     window.addEventListener("keydown", this.onAnyKey);
+    // Window-level so a tap anywhere — letterbox included — unlocks audio.
+    window.addEventListener("pointerdown", this.onAnyPointer);
     this.loadSong().catch((err: unknown) => {
       this.setStatus(`load failed: ${String(err)} — Enter to leave`);
     });
@@ -405,11 +520,14 @@ export class GameplayScene implements Scene {
   exit(): void {
     this.stage.dispose();
     this.avatar.dispose();
+    this.opponentAvatar?.dispose();
+    this.offOpponentHit?.();
     this.ghost.dispose();
     this.relay?.dispose();
     this.offGo?.();
     this.input.detach();
     window.removeEventListener("keydown", this.onAnyKey);
+    window.removeEventListener("pointerdown", this.onAnyPointer);
     this.clock.destroy();
   }
 
@@ -442,6 +560,7 @@ export class GameplayScene implements Scene {
     this.hud.update(ticker);
     this.ghost.update(ticker);
     this.avatar.update(ticker);
+    this.opponentAvatar?.update(ticker);
     this.stage.update(
       ticker,
       this.clock.started ? this.clock.songTime() : null,
@@ -450,13 +569,14 @@ export class GameplayScene implements Scene {
     if (!this.chart || !this.judge || !this.score) return;
     if (!this.clock.loaded) return;
     if (!this.clock.running) {
-      this.setStatus("press any key to enable audio");
+      this.setStatus("press any key or tap to enable audio");
       return;
     }
     if (!this.clock.started) {
       if (!this.beginPlayback(ticker.deltaMS)) return;
+      // Title and difficulty live in the top-center readout now.
       this.setStatus(
-        `${this.chart.song.title} · ${this.difficulty.label} — D F J K, hold the long notes, Enter to bail`,
+        "D F J K or touch the lanes, hold the long notes, Enter to bail",
       );
     }
 

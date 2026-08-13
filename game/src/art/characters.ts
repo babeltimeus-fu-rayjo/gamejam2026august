@@ -27,40 +27,54 @@ export interface CharacterDef {
   sourceSize: { w: number; h: number };
 }
 
-const TEAL_DIR = `${import.meta.env.BASE_URL}assets/avatars/teal/`;
+/** Pose set for a character whose folder holds one file per reaction. */
+function poses(dir: string): Record<Reaction, string> {
+  const base = `${import.meta.env.BASE_URL}assets/avatars/${dir}/`;
+  return {
+    idle: `${base}idle.png`,
+    perfect: `${base}perfect.png`,
+    great: `${base}great.png`,
+    good: `${base}good.png`,
+    miss: `${base}miss.png`,
+    comboBreak: `${base}combobreak.png`,
+    hype: `${base}hype.png`,
+  };
+}
+
+/** Every pose sheet is generated at this size. */
+const SOURCE_SIZE = { w: 864, h: 1152 };
 
 export const TEAL: CharacterDef = {
   id: "teal",
   name: "Teal",
-  poses: {
-    idle: `${TEAL_DIR}idle.png`,
-    perfect: `${TEAL_DIR}perfect.png`,
-    great: `${TEAL_DIR}great.png`,
-    good: `${TEAL_DIR}good.png`,
-    miss: `${TEAL_DIR}miss.png`,
-    comboBreak: `${TEAL_DIR}combobreak.png`,
-    hype: `${TEAL_DIR}hype.png`,
-  },
-  sourceSize: { w: 864, h: 1152 },
+  poses: poses("teal"),
+  sourceSize: SOURCE_SIZE,
 };
 
-const KOUEN_DIR = `${import.meta.env.BASE_URL}assets/avatars/kouen/`;
+export const IDOL: CharacterDef = {
+  id: "idol",
+  name: "Idol",
+  poses: poses("idol"),
+  sourceSize: SOURCE_SIZE,
+};
+
+export const GAL: CharacterDef = {
+  id: "gal",
+  name: "Gal",
+  poses: poses("gal"),
+  sourceSize: SOURCE_SIZE,
+};
 
 export const KOUEN: CharacterDef = {
   id: "kouen",
   name: "Kouen",
   poses: {
-    idle: `${KOUEN_DIR}idle.png`,
-    perfect: `${KOUEN_DIR}perfect.png`,
-    great: `${KOUEN_DIR}great.png`,
-    good: `${KOUEN_DIR}good.png`,
+    ...poses("kouen"),
     // No dedicated miss pose yet — the shock frame stands in until one lands.
-    miss: `${KOUEN_DIR}combobreak.png`,
-    comboBreak: `${KOUEN_DIR}combobreak.png`,
-    hype: `${KOUEN_DIR}hype.png`,
+    miss: poses("kouen").comboBreak,
   },
-  sourceSize: { w: 864, h: 1152 },
+  sourceSize: SOURCE_SIZE,
 };
 
 /** Selectable roster, in lobby cycle order. */
-export const CHARACTERS: readonly CharacterDef[] = [TEAL, KOUEN];
+export const CHARACTERS: readonly CharacterDef[] = [TEAL, IDOL, GAL, KOUEN];

@@ -49,7 +49,7 @@ export class TitleScene implements Scene {
     title.position.set(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.3);
 
     this.hint = new Text({
-      text: "arrows to choose  ·  enter to start",
+      text: "tap a mode  ·  or arrows + enter",
       style: {
         fontFamily: "Arial",
         fontSize: 24,

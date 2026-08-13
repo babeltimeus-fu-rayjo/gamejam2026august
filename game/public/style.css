@@ -1,3 +1,9 @@
+html,
+body {
+    /* No pull-to-refresh / scroll-chaining on touch devices. */
+    overscroll-behavior: none;
+}
+
 body {
     margin: 0;
     padding: 0;
@@ -12,4 +18,11 @@ body {
     display: flex;
     justify-content: center;
     align-items: center;
+    /* The whole surface is a play area: no browser gestures, no text
+       selection, no iOS long-press callout. Pixi sets touch-action on its
+       canvas; this also covers the letterbox gutters. */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
 }

@@ -14,13 +14,13 @@ import type { Judgement } from "../game/judge";
 /**
  * Bumped whenever a message shape *or* the meaning of its fields changes;
  * peers refuse to pair across it. v2 added per-player `difficulty`; v3 added
- * the armed/go handshake.
+ * the armed/go handshake; v4 added the avatar `character` to hello.
  *
  * v3 rather than v2 because both landed independently: a peer running the
  * difficulty-only v2 never sends `go`, so pairing with this build would wait
  * forever instead of failing loudly. Refusing the pair is the honest outcome.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /**
  * Trystero namespaces the DataChannel by action name and caps each at 12
@@ -59,6 +59,12 @@ export type HelloMsg = {
    * difficulty we don't have, and showing it beats dropping it.
    */
   difficulty: string;
+  /**
+   * Sender's avatar character id (art/characters.ts) so the opponent can
+   * stand on the other side of the stage. Plain string for the same reason
+   * as `difficulty`: an unknown id falls back to the default character.
+   */
+  character: string;
   ready: boolean;
 };
 
@@ -130,7 +136,7 @@ export type FinishMsg = {
 };
 
 /** Room codes: unambiguous alphabet — no I/O/0/1 to survive being read aloud. */
-const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const ROOM_CODE_LENGTH = 4;
 
 export function makeRoomCode(): string {
