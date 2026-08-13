@@ -7,6 +7,17 @@ export const POINTS: Readonly<Record<Exclude<Judgement, "miss">, number>> = {
   good: 30,
 };
 
+// Life gauge — misses drain it, hits nurse it back a little. A long run
+// of misses empties the gauge and fails the song (gameplay watches
+// `dead`); recovery is slow enough that survival stays earned.
+export const MAX_LIFE = 1000;
+const LIFE_DRAIN_MISS = 30;
+const LIFE_GAIN: Readonly<Record<Exclude<Judgement, "miss">, number>> = {
+  perfect: 9,
+  great: 6,
+  good: 3,
+};
+
 export interface PlayResults {
   score: number;
   maxCombo: number;
@@ -27,6 +38,8 @@ export type GameEvents = {
     deltaMs: number | null;
     combo: number;
     score: number;
+    /** 0..MAX_LIFE after this judgement was applied. */
+    life: number;
   };
 };
 
@@ -42,6 +55,7 @@ export class ScoreState {
   score = 0;
   combo = 0;
   maxCombo = 0;
+  life = MAX_LIFE;
   readonly counts: Record<Judgement, number> = {
     perfect: 0,
     great: 0,
@@ -60,11 +74,18 @@ export class ScoreState {
     this.counts[judgement] += 1;
     if (judgement === "miss") {
       this.combo = 0;
+      this.life = Math.max(0, this.life - LIFE_DRAIN_MISS);
       return;
     }
     this.score += POINTS[judgement];
+    this.life = Math.min(MAX_LIFE, this.life + LIFE_GAIN[judgement]);
     this.combo += 1;
     if (this.combo > this.maxCombo) this.maxCombo = this.combo;
+  }
+
+  /** True once the gauge is empty; the run fails at this point. */
+  get dead(): boolean {
+    return this.life <= 0;
   }
 
   get judgedCount(): number {

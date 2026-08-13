@@ -252,7 +252,9 @@ export class GameplayScene implements Scene {
 
   /** Score one half of one note and tell the HUD, avatar, and track about it. */
   private applyResolution(r: Resolution): void {
-    if (!this.score) return;
+    // `finished` also covers death mid-sweep: once the gauge empties, the
+    // remaining resolutions of that frame must not touch the dead scene.
+    if (!this.score || this.finished) return;
     if (r.judgement !== "miss") this.track.hitBurst(r.note.lane, r.judgement);
     this.score.apply(r.judgement);
     this.bus.emit("judgement", {
@@ -261,7 +263,10 @@ export class GameplayScene implements Scene {
       deltaMs: r.delta === null ? null : r.delta * 1000,
       combo: this.score.combo,
       score: this.score.score,
+      life: this.score.life,
     });
+    // Out of life: the song fails here, with the run's partial results.
+    if (this.score.dead) this.finish();
   }
 
   private onPress(lane: number): void {
@@ -407,6 +412,9 @@ export class GameplayScene implements Scene {
     for (const resolution of this.judge.sweep(t)) {
       this.applyResolution(resolution);
     }
+    // A sweep miss can empty the life gauge; finish() has then already
+    // destroyed the scene, so nothing below may touch it.
+    if (this.finished) return;
 
     this.track.sync(this.notes, t);
 
