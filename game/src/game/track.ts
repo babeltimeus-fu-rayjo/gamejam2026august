@@ -8,7 +8,8 @@ import {
 } from "pixi.js";
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { LANE_KEY_LABELS } from "../core/input";
-import { isHold, isResolved, type JudgedNote, type Judgement } from "./judge";
+import { TIER_COLOR, type FeedbackTier } from "./feedback";
+import { isHold, isResolved, type JudgedNote } from "./judge";
 
 // Track geometry — a trapezoidal highway over the art layer: narrow at
 // the top of the screen (the vanishing end), widening toward the player.
@@ -35,6 +36,24 @@ export function trackLeftAt(y: number): number {
 /** x of the boundary between lane `edge - 1` and lane `edge` at height y. */
 function laneEdgeXAt(edge: number, y: number): number {
   return trackLeftAt(y) + (edge / 4) * trackWidthAt(y);
+}
+
+/**
+ * The lane's slice of the trapezoid between two heights, optionally bled
+ * `spread` px past its side edges (used by the reaction zone's outer glow).
+ */
+function laneQuad(
+  lane: number,
+  top: number,
+  bottom: number,
+  spread = 0,
+): { x: number; y: number }[] {
+  return [
+    { x: laneEdgeXAt(lane, top) - spread, y: top },
+    { x: laneEdgeXAt(lane + 1, top) + spread, y: top },
+    { x: laneEdgeXAt(lane + 1, bottom) + spread, y: bottom },
+    { x: laneEdgeXAt(lane, bottom) - spread, y: bottom },
+  ];
 }
 
 function laneCenterXAt(lane: number, y: number): number {
@@ -73,6 +92,20 @@ export const NOTE_HEIGHT = 30;
 const NOTE_FADE_PX = 90;
 
 const RECEPTOR_IDLE_ALPHA = 0.55;
+
+// Reaction zone — the block of track under the beat line holding the D F J K
+// keycaps. It is the one place the player's hands are aimed at, so it is
+// where the judgement colour is shown: a lit slab plus an outer glow that
+// bleeds past the zone's edges, both tinted per judgement (feedback.ts).
+const PAD_HEIGHT = 104;
+/** How far the outer glow bleeds past the zone, on every side. */
+const PAD_GLOW_SPREAD = 30;
+/** Lit level for a bare keypress — a judgement takes it all the way to 1. */
+const PAD_PRESS_STRENGTH = 0.45;
+const PAD_DECAY_MS = 260;
+const PAD_LIGHT_ALPHA = 0.85;
+const PAD_GLOW_ALPHA = 0.8;
+const PAD_BASE_ALPHA = 0.16;
 
 // Per-lane palette (D F J K) shared by notes, receptors, and key labels:
 // dusty, desaturated arcane-ish tones — rose, amethyst, jade, antique
@@ -146,16 +179,16 @@ interface HoldSprite {
 }
 
 // Hit burst — when a note is keyed in time it flashes bright at the hit
-// line, blooms outward, and fades. White geometry tinted with the lane's
-// light variant + additive blend reads as light, not paint, and stays in
-// the muted palette. Intensity scales with judgement quality; misses get
-// nothing.
+// line, blooms outward, and fades. White geometry tinted with the judgement's
+// colour + additive blend reads as light, not paint. Intensity scales with
+// judgement quality; a miss lights the zone red but gets no bloom.
 const BURST_DURATION_MS = 280;
 const BURST_MAX_SCALE = 1.55;
-const BURST_INTENSITY: Readonly<Record<Judgement, number>> = {
-  perfect: 1,
-  great: 0.75,
-  good: 0.5,
+const BURST_INTENSITY: Readonly<Record<FeedbackTier, number>> = {
+  extraordinary: 1,
+  perfect: 0.9,
+  great: 0.7,
+  good: 0.45,
   miss: 0,
 };
 const BURST_CONTEXT = new GraphicsContext()
@@ -168,10 +201,11 @@ interface Burst {
   intensity: number;
 }
 
-// Hit glow — per-lane purple light columns rising from the beat line:
-// keying a note switches on that lane's light, strongest at the line
-// and transparent at its top edge, then it fades back out. Capped at
-// half the screen height by design.
+// Hit glow — per-lane light columns rising from the beat line: keying a note
+// switches on that lane's light, strongest at the line and transparent at its
+// top edge, then it fades back out. Drawn white and tinted with the
+// judgement's colour, so the column says the same thing the zone does. Capped
+// at half the screen height by design.
 const GLOW_HEIGHT = VIRTUAL_HEIGHT * 0.5;
 const GLOW_DURATION_MS = 420;
 const GLOW_PEAK_ALPHA = 0.9;
@@ -185,6 +219,14 @@ export class Track {
   readonly view = new Container();
 
   private readonly receptors: Graphics[] = [];
+  private readonly keyLabels: Text[] = [];
+  /** Reaction zone per lane: lit slab + the halo bleeding out of it. */
+  private readonly padLights: Graphics[] = [];
+  private readonly padGlows: Graphics[] = [];
+  /** Per lane 0..1: 1 the moment a note is judged, decaying to nothing. */
+  private readonly padStrengths = [0, 0, 0, 0];
+  /** Colour each zone is currently showing (judgement tier, or lane idle). */
+  private readonly padTints: number[] = [];
   private readonly holdsLayer = new Container();
   private readonly notesLayer = new Container();
   private readonly burstLayer = new Container();
@@ -226,13 +268,14 @@ export class Track {
     g.stroke({ width: 2, fill: fadeUp(58, 47, 92, 1) });
     g.rect(trackLeftAt(HIT_Y), HIT_Y, trackWidthAt(HIT_Y), 4).fill(0xbfb3e0);
 
-    // Amethyst, fading to nothing at the top; alpha is animated per hit.
+    // White, fading to nothing at the top; tinted per judgement and its
+    // alpha animated per hit.
     const glowGradient = new FillGradient({
       start: { x: 0, y: 1 },
       end: { x: 0, y: 0 },
       colorStops: [
-        { offset: 0, color: "rgba(150, 120, 200, 0.55)" },
-        { offset: 1, color: "rgba(150, 120, 200, 0)" },
+        { offset: 0, color: "rgba(255, 255, 255, 0.5)" },
+        { offset: 1, color: "rgba(255, 255, 255, 0)" },
       ],
     });
     // One light column per lane, each following its lane's slanted edges
@@ -262,35 +305,120 @@ export class Track {
       this.burstLayer,
     );
 
+    this.buildReactionZones();
+  }
+
+  /**
+   * The D F J K reaction zone: one lit block of track per lane under the beat
+   * line, holding that lane's keycap. Three layers, all drawn white so a
+   * single `tint` per lane recolours the whole zone to the judgement's colour:
+   *
+   * - **base**, always visible, dim: draws the region so the player can see
+   *   where the zone is before touching anything;
+   * - **light**, brightest at the beat line and fading down the slab;
+   * - **glow**, a bigger quad bled past every edge and additively blended —
+   *   the outer glow, which is what makes the zone read as lit from within
+   *   rather than painted.
+   */
+  private buildReactionZones(): void {
+    const padBottom = HIT_Y + PAD_HEIGHT;
+    const glowTop = HIT_Y - PAD_GLOW_SPREAD;
+    const glowBottom = padBottom + PAD_GLOW_SPREAD;
+    // Where the beat line falls inside the glow quad: the halo peaks on the
+    // line itself and falls away above and below it.
+    const linePoint = PAD_GLOW_SPREAD / (glowBottom - glowTop);
+
     for (let lane = 0; lane < 4; lane++) {
+      this.padTints.push(LANE_COLORS[lane].note);
+
+      const glow = new Graphics()
+        .poly(laneQuad(lane, glowTop, glowBottom, PAD_GLOW_SPREAD))
+        .fill(
+          new FillGradient({
+            start: { x: 0, y: 0 },
+            end: { x: 0, y: 1 },
+            colorStops: [
+              { offset: 0, color: "rgba(255, 255, 255, 0)" },
+              { offset: linePoint, color: "rgba(255, 255, 255, 0.55)" },
+              { offset: 0.6, color: "rgba(255, 255, 255, 0.2)" },
+              { offset: 1, color: "rgba(255, 255, 255, 0)" },
+            ],
+          }),
+        );
+      glow.blendMode = "add";
+      glow.alpha = 0;
+      this.padGlows.push(glow);
+
+      const base = new Graphics()
+        .poly(laneQuad(lane, HIT_Y, padBottom))
+        .fill({ color: LANE_COLORS[lane].note, alpha: PAD_BASE_ALPHA })
+        .poly(laneQuad(lane, HIT_Y, padBottom))
+        .stroke({ width: 2, color: LANE_COLORS[lane].note, alpha: 0.45 });
+
+      const light = new Graphics().poly(laneQuad(lane, HIT_Y, padBottom)).fill(
+        new FillGradient({
+          start: { x: 0, y: 0 },
+          end: { x: 0, y: 1 },
+          colorStops: [
+            { offset: 0, color: "rgba(255, 255, 255, 0.75)" },
+            { offset: 1, color: "rgba(255, 255, 255, 0.05)" },
+          ],
+        }),
+      );
+      light.blendMode = "add";
+      light.alpha = 0;
+      this.padLights.push(light);
+
       const cx = laneCenterXAt(lane, HIT_Y + 50);
       const box = new Graphics()
         .roundRect(cx - 26, HIT_Y + 24, 52, 52, 8)
-        .stroke({ width: 3, color: LANE_COLORS[lane].note });
+        .stroke({ width: 3, color: 0xffffff });
+      box.tint = LANE_COLORS[lane].note;
       box.alpha = RECEPTOR_IDLE_ALPHA;
       this.receptors.push(box);
+
+      // White fill + tint, like everything else in the zone, so the keycap
+      // takes the judgement colour without re-rendering its texture.
       const label = new Text({
         text: LANE_KEY_LABELS[lane],
         style: {
           fontFamily: "Arial",
           fontSize: 28,
           fontWeight: "700",
-          fill: LANE_COLORS[lane].label,
+          fill: 0xffffff,
         },
       });
       label.anchor.set(0.5);
       label.position.set(cx, HIT_Y + 50);
-      this.view.addChild(box, label);
+      label.tint = LANE_COLORS[lane].label;
+      this.keyLabels.push(label);
+
+      this.view.addChild(glow, base, light, box, label);
     }
   }
 
+  /** Light a lane's zone at press level, in its own colour: no judgement yet. */
   flash(lane: number): void {
-    this.receptors[lane].alpha = 1;
+    if (this.padStrengths[lane] <= PAD_PRESS_STRENGTH) {
+      this.padStrengths[lane] = PAD_PRESS_STRENGTH;
+      this.padTints[lane] = LANE_COLORS[lane].label;
+      this.applyPad(lane);
+    }
   }
 
-  /** Flash-and-bloom at the hit line for a note keyed in time. */
-  hitBurst(lane: number, judgement: Judgement): void {
-    const intensity = BURST_INTENSITY[judgement];
+  /**
+   * Show a judgement in a lane: the reaction zone, its glow, the keycap, the
+   * rising light column and the bloom all take the tier's colour at once.
+   * A miss lights the zone red but gets no bloom.
+   */
+  judged(lane: number, tier: FeedbackTier): void {
+    const color = TIER_COLOR[tier];
+    this.padTints[lane] = color;
+    this.padStrengths[lane] = 1;
+    this.applyPad(lane);
+    this.glows[lane].tint = color;
+
+    const intensity = BURST_INTENSITY[tier];
     if (intensity <= 0) return;
     let sprite = this.burstPool.pop();
     if (!sprite) {
@@ -298,7 +426,7 @@ export class Track {
       sprite.blendMode = "add";
       this.burstLayer.addChild(sprite);
     }
-    sprite.tint = LANE_COLORS[lane].label;
+    sprite.tint = color;
     sprite.position.set(laneCenterXAt(lane, HIT_Y), HIT_Y);
     sprite.scale.set(1);
     sprite.alpha = intensity;
@@ -309,12 +437,30 @@ export class Track {
     this.glows[lane].alpha = GLOW_PEAK_ALPHA * this.glowStrengths[lane] ** 2;
   }
 
+  /** Push a lane's current strength + colour onto its four zone layers. */
+  private applyPad(lane: number): void {
+    const s = this.padStrengths[lane];
+    const color = s > 0 ? this.padTints[lane] : LANE_COLORS[lane].note;
+    this.padLights[lane].tint = color;
+    this.padGlows[lane].tint = color;
+    this.receptors[lane].tint = color;
+    this.keyLabels[lane].tint = s > 0 ? color : LANE_COLORS[lane].label;
+    this.padLights[lane].alpha = PAD_LIGHT_ALPHA * s;
+    // Squared: the halo arrives hard on the hit and thins out fast, so a
+    // steady stream of notes doesn't leave the zone permanently blown out.
+    this.padGlows[lane].alpha = PAD_GLOW_ALPHA * s ** 2;
+    this.receptors[lane].alpha =
+      RECEPTOR_IDLE_ALPHA + (1 - RECEPTOR_IDLE_ALPHA) * s;
+  }
+
   update(ticker: Ticker): void {
-    for (const receptor of this.receptors) {
-      receptor.alpha = Math.max(
-        RECEPTOR_IDLE_ALPHA,
-        receptor.alpha - ticker.deltaMS / 200,
+    for (let lane = 0; lane < 4; lane++) {
+      if (this.padStrengths[lane] <= 0) continue;
+      this.padStrengths[lane] = Math.max(
+        0,
+        this.padStrengths[lane] - ticker.deltaMS / PAD_DECAY_MS,
       );
+      this.applyPad(lane);
     }
 
     for (let lane = 0; lane < 4; lane++) {

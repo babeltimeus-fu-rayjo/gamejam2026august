@@ -5,6 +5,7 @@ import { Stage } from "../art/stage";
 import { SONG_DIR, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { parseChart, type Chart } from "../core/beatmap";
 import { applyDifficulty, type Difficulty } from "../core/difficulty";
+import { stopMenuBgm } from "../core/bgm";
 import { AudioClock } from "../core/clock";
 import { Emitter } from "../core/events";
 import { LaneInput } from "../core/input";
@@ -12,6 +13,13 @@ import { GameplayRelay } from "../net/relay";
 import { activeRoom } from "../net/room";
 import { GhostHud } from "../ui/ghost-hud";
 import { Hud } from "../ui/hud";
+import {
+  shakeOffset,
+  SHAKE_DURATION_MS,
+  SHAKE_STREAK,
+  tierFor,
+  type FeedbackTier,
+} from "./feedback";
 import { Judge, noteWeight, type JudgedNote, type Resolution } from "./judge";
 import { ScoreState, type GameEvents, type PlayResults } from "./score";
 import { Track } from "./track";
@@ -83,6 +91,10 @@ export class GameplayScene implements Scene {
   private lastNoteT = 0;
   private finished = false;
   private paused = false;
+  /** EXTRAORDINARY hits in a row; every SHAKE_STREAK of them kicks the camera. */
+  private shakeStreak = 0;
+  /** ms into the running camera shake; at or past the duration means idle. */
+  private shakeAgeMs = SHAKE_DURATION_MS;
 
   constructor(
     private readonly difficulty: Difficulty,
@@ -255,10 +267,15 @@ export class GameplayScene implements Scene {
     // `finished` also covers death mid-sweep: once the gauge empties, the
     // remaining resolutions of that frame must not touch the dead scene.
     if (!this.score || this.finished) return;
-    if (r.judgement !== "miss") this.track.hitBurst(r.note.lane, r.judgement);
+    // Scoring first: the tier reads the combo this note just produced, so an
+    // EXTRAORDINARY shows on the hit that earns it, not on the next one.
     this.score.apply(r.judgement);
+    const tier = tierFor(r.judgement, this.score.combo);
+    this.track.judged(r.note.lane, tier);
+    this.trackShakeStreak(tier);
     this.bus.emit("judgement", {
       judgement: r.judgement,
+      tier,
       lane: r.note.lane,
       deltaMs: r.delta === null ? null : r.delta * 1000,
       combo: this.score.combo,
@@ -267,6 +284,22 @@ export class GameplayScene implements Scene {
     });
     // Out of life: the song fails here, with the run's partial results.
     if (this.score.dead) this.finish();
+  }
+
+  /**
+   * Every SHAKE_STREAK EXTRAORDINARY hits in a row, kick the camera. Anything
+   * less than EXTRAORDINARY — including a GOOD that keeps the combo — puts the
+   * count back to zero, so the shake stays a reward for an unbroken run.
+   */
+  private trackShakeStreak(tier: FeedbackTier): void {
+    if (tier !== "extraordinary") {
+      this.shakeStreak = 0;
+      return;
+    }
+    this.shakeStreak += 1;
+    if (this.shakeStreak < SHAKE_STREAK) return;
+    this.shakeStreak = 0;
+    this.shakeAgeMs = 0;
   }
 
   private onPress(lane: number): void {
@@ -358,6 +391,9 @@ export class GameplayScene implements Scene {
   }
 
   enter(): void {
+    // The menus' music runs on a shared instance that outlives their scenes,
+    // so it has to be stopped here or it would play under the song.
+    stopMenuBgm();
     this.input.attach();
     window.addEventListener("keydown", this.onAnyKey);
     this.loadSong().catch((err: unknown) => {
@@ -382,9 +418,26 @@ export class GameplayScene implements Scene {
     if (this.status.text !== text) this.status.text = text;
   }
 
+  /**
+   * Camera shake: the scene's whole view is offset, so track, HUD and avatar
+   * kick together. The scene sits inside the letterboxed root, so a few px of
+   * travel never uncovers anything but the backdrop behind it.
+   */
+  private updateShake(ticker: Ticker): void {
+    if (this.shakeAgeMs >= SHAKE_DURATION_MS) return;
+    this.shakeAgeMs += ticker.deltaMS;
+    if (this.shakeAgeMs >= SHAKE_DURATION_MS) {
+      this.view.position.set(0, 0);
+      return;
+    }
+    const { x, y } = shakeOffset(this.shakeAgeMs);
+    this.view.position.set(x, y);
+  }
+
   update(ticker: Ticker): void {
     if (this.paused) return; // clock is frozen; freeze the visuals too
 
+    this.updateShake(ticker);
     this.track.update(ticker);
     this.hud.update(ticker);
     this.ghost.update(ticker);
