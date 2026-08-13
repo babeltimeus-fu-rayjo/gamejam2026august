@@ -368,7 +368,11 @@ export class NeonTunnel extends Container {
 
   override destroy(options?: DestroyOptions): void {
     // Mesh.destroy leaves the shader and geometry alone; they're ours to free.
-    this.mesh.shader?.destroy(true);
+    // Not `destroy(true)`: `Shader.from` builds its GlProgram through
+    // `GlProgram.from`, which caches by shader source, so the program is shared
+    // with every other tunnel ever created. Destroying it here leaves a dead
+    // entry in that cache and the next tunnel comes up with no attributes.
+    this.mesh.shader?.destroy(false);
     this.mesh.geometry.destroy();
     super.destroy(options);
   }

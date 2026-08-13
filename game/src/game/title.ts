@@ -2,8 +2,8 @@ import { Container, Graphics, Text, Ticker } from "pixi.js";
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH, type GameMode } from "../config";
 import { Bgm } from "../core/bgm";
 import { NeonButton } from "./neon-button";
-import { NeonTunnel } from "./neon-tunnel";
 import type { Scene } from "./scenes";
+import { VideoBackdrop } from "./video-backdrop";
 
 const BGM_URL = `${import.meta.env.BASE_URL}audio/LobbyBM.mp3`;
 
@@ -22,14 +22,14 @@ const MODES: readonly {
 ];
 
 /**
- * Title screen: neon tunnel behind, mode select in front, lobby music driving
- * both. The tunnel's camera speed and glow follow the track's low end, so the
- * whole screen moves on the beat.
+ * Title screen: the lobby's background video behind, mode select in front,
+ * lobby music over the top. The video plays on through into the lobby, which
+ * shares both the clip and the panel style.
  */
 export class TitleScene implements Scene {
   readonly view = new Container();
 
-  private readonly tunnel: NeonTunnel;
+  private readonly backdrop = new VideoBackdrop();
   private readonly buttons: NeonButton[] = [];
   private readonly hint: Text;
   private readonly bgm = new Bgm();
@@ -37,16 +37,6 @@ export class TitleScene implements Scene {
   private elapsed = 0;
 
   constructor(private readonly onSelect: (mode: GameMode) => void) {
-    this.tunnel = new NeonTunnel({
-      width: VIRTUAL_WIDTH,
-      height: VIRTUAL_HEIGHT,
-    });
-
-    // Scrim: the tunnel peaks near white, so the type needs something to sit on.
-    const scrim = new Graphics()
-      .rect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT)
-      .fill({ color: 0x05030d, alpha: 0.32 });
-
     const title = new Text({
       text: "RHYTHM GAME",
       style: {
@@ -72,8 +62,8 @@ export class TitleScene implements Scene {
     this.hint.anchor.set(0.5);
     this.hint.position.set(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT * 0.84);
 
-    // The tunnel wall behind the hint can be any colour on any given frame, so
-    // the line needs its own backing to stay legible.
+    // The video behind the hint can be any colour on any given frame, so the
+    // line needs its own backing to stay legible.
     const pillH = this.hint.height + 20;
     const hintPill = new Graphics()
       .roundRect(
@@ -98,7 +88,7 @@ export class TitleScene implements Scene {
     version.anchor.set(1, 1);
     version.position.set(VIRTUAL_WIDTH - 16, VIRTUAL_HEIGHT - 12);
 
-    this.view.addChild(this.tunnel, scrim, title, hintPill, this.hint, version);
+    this.view.addChild(this.backdrop, title, hintPill, this.hint, version);
 
     const row = MODES.length * BUTTON_WIDTH + (MODES.length - 1) * BUTTON_GAP;
     MODES.forEach((m, i) => {
@@ -109,6 +99,10 @@ export class TitleScene implements Scene {
         height: BUTTON_HEIGHT,
         color: m.color,
         onActivate: () => this.choose(m.mode),
+        onFocus: () => {
+          this.focus = i;
+          this.applyFocus();
+        },
       });
       button.position.set(
         (VIRTUAL_WIDTH - row) / 2 + i * (BUTTON_WIDTH + BUTTON_GAP),
@@ -156,6 +150,7 @@ export class TitleScene implements Scene {
   enter(): void {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("pointerdown", this.onPointerDown);
+    this.backdrop.play();
 
     void this.bgm
       .load(BGM_URL)
@@ -166,6 +161,8 @@ export class TitleScene implements Scene {
   exit(): void {
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("pointerdown", this.onPointerDown);
+    // No pause here: destroying the backdrop stops the clip, and the lobby —
+    // which shares it — resumes it from the same frame on the way in.
     this.bgm.destroy();
   }
 
@@ -174,7 +171,6 @@ export class TitleScene implements Scene {
     this.elapsed += dt;
 
     this.bgm.sample(dt);
-    this.tunnel.update(dt, this.bgm.level, this.bgm.kick);
     for (const button of this.buttons) button.update(dt, this.bgm.kick);
 
     this.hint.alpha = 0.55 + 0.45 * Math.sin(this.elapsed * 2.9);

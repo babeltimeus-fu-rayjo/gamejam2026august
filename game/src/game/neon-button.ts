@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from "pixi.js";
+import { drawAccentRing, drawPanel } from "./panel";
 
 export interface NeonButtonOptions {
   label: string;
@@ -6,27 +7,34 @@ export interface NeonButtonOptions {
   sub?: string;
   width: number;
   height: number;
-  /** Outline and glow colour. */
+  /** Accent colour: the caption, and the ring shown when selected. */
   color: number;
   onActivate: () => void;
+  /**
+   * Hover. Owners that track focus across a row of buttons should move their
+   * focus here rather than let the button select itself, or the hovered button
+   * and the keyboard-focused one both end up wearing the ring.
+   */
+  onFocus?: () => void;
 }
 
 /**
- * Neon-outlined menu button.
+ * Menu button wearing the lobby's panel style: same translucent slab and violet
+ * edge as the lobby rows, with the accent ring marking the live one.
  *
  * Pointer and keyboard drive the same `selected` state, so hovering with the
  * mouse and arrowing across with the keyboard can't disagree about which button
- * is live. The glow breathes on the selected one and pulses harder on a beat.
+ * is live. The ring brightens on a beat — the only thing left reacting to the
+ * music now that the background is a video.
  */
 export class NeonButton extends Container {
-  private readonly frame = new Graphics();
-  private readonly glow = new Graphics();
+  private readonly panel = new Graphics();
+  private readonly ring = new Graphics();
   private readonly w: number;
   private readonly h: number;
   private readonly color: number;
 
   private selectedState = false;
-  private elapsed = 0;
 
   constructor({
     label,
@@ -35,13 +43,15 @@ export class NeonButton extends Container {
     height,
     color,
     onActivate,
+    onFocus,
   }: NeonButtonOptions) {
     super();
     this.w = width;
     this.h = height;
     this.color = color;
 
-    this.addChild(this.glow, this.frame);
+    drawPanel(this.panel, width, height);
+    this.addChild(this.panel, this.ring);
 
     const text = new Text({
       text: label,
@@ -75,11 +85,13 @@ export class NeonButton extends Container {
 
     this.eventMode = "static";
     this.cursor = "pointer";
-    this.on("pointerover", () => (this.selected = true));
+    this.on("pointerover", () =>
+      onFocus ? onFocus() : (this.selected = true),
+    );
     // pointertap only: binding pointerdown as well fires the callback twice.
     this.on("pointertap", onActivate);
 
-    this.redraw(0);
+    this.update(0);
   }
 
   get selected(): boolean {
@@ -90,41 +102,10 @@ export class NeonButton extends Container {
     this.selectedState = value;
   }
 
-  /** @param kick 0..1 beat spike, brightens the glow in time with the music. */
-  update(dt: number, kick = 0): void {
-    this.elapsed += dt;
-    const breathe = this.selectedState
-      ? 0.7 + 0.3 * Math.sin(this.elapsed * 3.4)
-      : 0.22;
-    this.redraw(Math.min(1, breathe + kick * (this.selectedState ? 0.5 : 0.2)));
-  }
-
-  private redraw(intensity: number): void {
-    const r = 14;
-
-    this.glow.clear();
-    // Three concentric strokes fake a bloom without pulling in a blur filter.
-    for (let i = 3; i >= 1; i--) {
-      this.glow
-        .roundRect(-i * 4, -i * 4, this.w + i * 8, this.h + i * 8, r + i * 4)
-        .stroke({
-          color: this.color,
-          width: 2 + i,
-          alpha: (intensity * 0.16) / i,
-        });
-    }
-
-    this.frame
-      .clear()
-      .roundRect(0, 0, this.w, this.h, r)
-      .fill({ color: 0x000000, alpha: 0.45 + intensity * 0.1 })
-      .stroke({
-        color: this.color,
-        width: 2.5,
-        alpha: 0.55 + intensity * 0.45,
-      });
-
-    this.scale.set(1 + intensity * 0.02);
-    this.pivot.set(this.w * intensity * 0.01, this.h * intensity * 0.01);
+  /** @param kick 0..1 beat spike, brightens the ring in time with the music. */
+  update(_dt: number, kick = 0): void {
+    this.ring.visible = this.selectedState;
+    if (!this.selectedState) return;
+    drawAccentRing(this.ring, this.w, this.h, this.color, 0.75 + kick * 0.25);
   }
 }

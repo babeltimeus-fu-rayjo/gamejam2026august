@@ -1,4 +1,4 @@
-import { Container, Graphics, Text, Ticker } from "pixi.js";
+import { Container, Graphics, Rectangle, Text, Ticker } from "pixi.js";
 import { CHARACTERS, type CharacterDef } from "../art/characters";
 import {
   SONG_DIR,
@@ -25,24 +25,38 @@ import {
   stepDifficulty,
   type DifficultyId,
 } from "../core/difficulty";
+import { drawAccentRing, drawPanel } from "./panel";
 import type { Scene } from "./scenes";
+import { VideoBackdrop } from "./video-backdrop";
 
-const ROW_KEYS = [
+/** The rows that get a panel in the grid. START sits below it, not in it. */
+const PANEL_ROWS = [
   "MODE",
   "TRACK",
   "DIFFICULTY",
   "AVATAR",
   "ROOM",
   "PLAYERS",
-  "START",
 ] as const;
-type RowKey = (typeof ROW_KEYS)[number];
+type RowKey = (typeof PANEL_ROWS)[number] | "START";
+
+/** Accents match the title screen's mode buttons, so the pick reads as carried over. */
+const MODE_COLOR: Record<GameMode, number> = {
+  single: 0x35f0ff,
+  battle: 0xff45c8,
+};
 
 const PANEL_WIDTH = 760;
 const PANEL_HEIGHT = 56;
 // Tightened from 18 when the row count reached seven; any looser and the
 // bottom row runs off the 720-tall virtual canvas.
 const ROW_GAP = 14;
+
+// START is the call to action under the grid, at 3x the row text. Pulling it
+// out of the grid frees exactly the 70px its block needs, so the six remaining
+// rows keep their original position.
+const START_SIZE = 66;
+const START_Y = 648;
 
 /**
  * Lead-in before a networked start. Long enough to absorb one-way relay
@@ -63,6 +77,7 @@ const START_DELAY_MS = 1500;
 export class LobbyScene implements Scene {
   readonly view = new Container();
 
+  private readonly backdrop = new VideoBackdrop();
   private readonly values = {} as Record<RowKey, Text>;
   private readonly unsubscribes: (() => void)[] = [];
 
@@ -84,11 +99,14 @@ export class LobbyScene implements Scene {
     private difficulty: DifficultyId,
     private readonly onDifficulty: (difficulty: DifficultyId) => void,
     private readonly onStart: () => void,
+    private readonly onBack: () => void,
   ) {
     this.characterIndex = Math.max(
       0,
       CHARACTERS.findIndex((c) => c.id === character.id),
     );
+    this.view.addChild(this.backdrop);
+
     const heading = new Text({
       text: "LOBBY",
       style: {
@@ -106,42 +124,47 @@ export class LobbyScene implements Scene {
     const panelX = (VIRTUAL_WIDTH - PANEL_WIDTH) / 2;
     const firstY = VIRTUAL_HEIGHT * 0.26;
 
-    ROW_KEYS.forEach((key, i) => {
-      const y = firstY + i * (PANEL_HEIGHT + ROW_GAP);
-
-      const panel = new Graphics()
-        .roundRect(panelX, y, PANEL_WIDTH, PANEL_HEIGHT, 10)
-        .fill(0x1d1630);
-
-      const label = new Text({
-        text: key,
-        style: {
-          fontFamily: "Arial",
-          fontSize: 22,
-          fontWeight: "700",
-          letterSpacing: 3,
-          fill: 0xcfc4f2,
-        },
-      });
-      label.anchor.set(0, 0.5);
-      label.position.set(panelX + 32, y + PANEL_HEIGHT / 2);
-
-      const value = new Text({
-        text: "",
-        style: {
-          fontFamily: "Arial",
-          fontSize: 22,
-          // White so the difficulty row can recolour itself with `tint`,
-          // which costs nothing, instead of re-rendering the text canvas.
-          fill: key === "DIFFICULTY" ? 0xffffff : 0x9f8fd8,
-        },
-      });
-      value.anchor.set(0, 0.5);
-      value.position.set(panelX + 200, y + PANEL_HEIGHT / 2);
-
-      this.values[key] = value;
-      this.view.addChild(panel, label, value);
+    PANEL_ROWS.forEach((key, i) => {
+      const row = this.buildRow(key);
+      row.position.set(panelX, firstY + i * (PANEL_HEIGHT + ROW_GAP));
+      this.view.addChild(row);
     });
+
+    const start = new Text({
+      text: "START",
+      style: {
+        fontFamily: "Arial",
+        fontSize: START_SIZE,
+        fontWeight: "900",
+        letterSpacing: 9,
+        fill: 0xffffff,
+        // Outer glow: a shadow at zero distance haloes the glyphs evenly. Cheap
+        // next to a real blur filter, and baked into the text texture.
+        dropShadow: {
+          color: 0xffffff,
+          alpha: 0.5,
+          blur: 12,
+          distance: 0,
+          angle: 0,
+        },
+        // Without headroom the glow is clipped at the texture's edge.
+        padding: 18,
+      },
+    });
+    start.anchor.set(0.5);
+    start.position.set(VIRTUAL_WIDTH / 2, START_Y);
+
+    // The old START row's value line, now centred under the word. Still driven
+    // by startValue(), so it keeps reporting ready state and the countdown.
+    const startHint = new Text({
+      text: "",
+      style: { fontFamily: "Arial", fontSize: 22, fill: 0xcfc4f2 },
+    });
+    startHint.anchor.set(0.5);
+    startHint.position.set(VIRTUAL_WIDTH / 2, START_Y + START_SIZE * 0.72);
+    this.values.START = startHint;
+
+    this.view.addChild(start, startHint);
 
     // Returning from results with a room still open: re-attach to it.
     const existing = activeRoom();
@@ -151,6 +174,101 @@ export class LobbyScene implements Scene {
       this.subscribe();
     }
     this.render();
+  }
+
+  /**
+   * One info row, in the panel style the title's mode buttons share. MODE is
+   * the clickable one: it accents in the mode's colour and goes back to mode
+   * select, which is the only way back — the arrow keys are already spoken for
+   * by the avatar and difficulty pickers.
+   */
+  private buildRow(key: (typeof PANEL_ROWS)[number]): Container {
+    const row = new Container();
+
+    const panel = new Graphics();
+    drawPanel(panel, PANEL_WIDTH, PANEL_HEIGHT);
+
+    const label = new Text({
+      text: key,
+      style: {
+        fontFamily: "Arial",
+        fontSize: 22,
+        fontWeight: "700",
+        letterSpacing: 3,
+        fill: 0xcfc4f2,
+      },
+    });
+    label.anchor.set(0, 0.5);
+    label.position.set(32, PANEL_HEIGHT / 2);
+
+    const value = new Text({
+      text: "",
+      style: {
+        fontFamily: "Arial",
+        fontSize: 22,
+        // White so the difficulty row can recolour itself with `tint`,
+        // which costs nothing, instead of re-rendering the text canvas.
+        fill:
+          key === "DIFFICULTY"
+            ? 0xffffff
+            : key === "MODE"
+              ? MODE_COLOR[this.gameMode]
+              : 0x9f8fd8,
+      },
+    });
+    value.anchor.set(0, 0.5);
+    value.position.set(200, PANEL_HEIGHT / 2);
+
+    this.values[key] = value;
+    row.addChild(panel, label, value);
+    if (key !== "MODE") return row;
+
+    // Hover ring, so the one clickable row announces itself on approach. Same
+    // ring the title's selected mode button wears.
+    const ring = new Graphics();
+    drawAccentRing(ring, PANEL_WIDTH, PANEL_HEIGHT, MODE_COLOR[this.gameMode]);
+    ring.visible = false;
+
+    const affordance = new Text({
+      text: "click to change",
+      style: { fontFamily: "Arial", fontSize: 18, fill: 0x8b7bc4 },
+    });
+    affordance.anchor.set(1, 0.5);
+    affordance.position.set(PANEL_WIDTH - 24, PANEL_HEIGHT / 2);
+    affordance.alpha = 0.7;
+
+    row.addChild(ring, affordance);
+
+    // Children sit above the panel, so the row hit-tests as a whole rather than
+    // going dead wherever a glyph happens to be.
+    row.eventMode = "static";
+    row.cursor = "pointer";
+    row.hitArea = new Rectangle(0, 0, PANEL_WIDTH, PANEL_HEIGHT);
+    row.on("pointerover", () => {
+      ring.visible = true;
+      affordance.alpha = 1;
+    });
+    row.on("pointerout", () => {
+      ring.visible = false;
+      affordance.alpha = 0.7;
+    });
+    row.on("pointertap", () => void this.goBack());
+
+    return row;
+  }
+
+  /**
+   * Back to mode select. Any open room is abandoned first: the room outlives
+   * this scene on purpose (gameplay needs it), so without this a player who
+   * re-picked their mode would land back here still joined to the old one.
+   */
+  private async goBack(): Promise<void> {
+    try {
+      if (activeRoom()) await this.exitRoom();
+    } catch (err) {
+      console.warn("[lobby] leaving the room failed", err);
+    }
+    this.onBack();
   }
 
   /**
@@ -412,8 +530,10 @@ export class LobbyScene implements Scene {
   }
 
   private modeValue(): string {
+    // Kept short: this row also carries the "click to change" affordance on its
+    // right edge, and the ROOM row below spells out the networking.
     return this.gameMode === "battle"
-      ? "Battle — head to head over the network"
+      ? "Battle — head to head"
       : "Single — solo run";
   }
 
@@ -480,6 +600,7 @@ export class LobbyScene implements Scene {
 
   enter(): void {
     window.addEventListener("keydown", this.onKeyDown);
+    this.backdrop.play();
     this.loadChartHash().catch((err: unknown) => {
       this.status = `chart load failed: ${String(err)}`;
       this.render();
@@ -488,6 +609,7 @@ export class LobbyScene implements Scene {
 
   exit(): void {
     window.removeEventListener("keydown", this.onKeyDown);
+    this.backdrop.pause();
     this.unsubscribeAll();
     if (this.startTimer !== null) window.clearTimeout(this.startTimer);
     // The room deliberately outlives this scene — gameplay needs it. Only an
