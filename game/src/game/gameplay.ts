@@ -1,4 +1,6 @@
 import { Container, Graphics, Text, Ticker } from "pixi.js";
+import { Avatar } from "../art/avatar";
+import { TEAL } from "../art/characters";
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { parseChart, type Chart } from "../core/beatmap";
 import { AudioClock } from "../core/clock";
@@ -37,6 +39,13 @@ export class GameplayScene implements Scene {
   private readonly bus = new Emitter<GameEvents>();
   private readonly track = new Track();
   private readonly hud = new Hud(this.bus);
+  // Player sits right of the track; a future multiplayer opponent takes
+  // side: "left" with its own bus (see PLAN.md M4/M6).
+  private readonly avatar = new Avatar({
+    side: "right",
+    character: TEAL,
+    bus: this.bus,
+  });
   private readonly input = new LaneInput((lane) => this.onLane(lane));
   private readonly status: Text;
 
@@ -113,6 +122,7 @@ export class GameplayScene implements Scene {
 
     this.view.addChild(
       art,
+      this.avatar.view,
       this.track.view,
       this.hud.view,
       this.status,
@@ -241,6 +251,7 @@ export class GameplayScene implements Scene {
   }
 
   exit(): void {
+    this.avatar.dispose();
     this.input.detach();
     window.removeEventListener("keydown", this.onAnyKey);
     this.clock.destroy();
@@ -256,6 +267,7 @@ export class GameplayScene implements Scene {
 
     this.track.update(ticker);
     this.hud.update(ticker);
+    this.avatar.update(ticker);
 
     if (!this.chart || !this.judge || !this.score) return;
     if (!this.clock.loaded) return;
