@@ -10,16 +10,67 @@ import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { LANE_KEY_LABELS } from "../core/input";
 import { isHold, isResolved, type JudgedNote, type Judgement } from "./judge";
 
-// Track geometry — a vertical, semi-transparent band over the art layer.
-// Notes fall from the top of the screen down into the hit line.
-export const LANE_WIDTH = 100;
-export const TRACK_WIDTH = LANE_WIDTH * 4;
-export const TRACK_LEFT = Math.round((VIRTUAL_WIDTH - TRACK_WIDTH) / 2);
+// Track geometry — a trapezoidal highway over the art layer: narrow at
+// the top of the screen (the vanishing end), widening toward the player.
+// Notes fall from the top into the hit line, spreading apart and growing
+// as they descend. Every x/width is a linear function of y.
+export const TRACK_TOP_WIDTH = 260;
+export const TRACK_BOTTOM_WIDTH = 960;
 export const HIT_Y = VIRTUAL_HEIGHT - 150;
-/** Default note travel speed, px per second; difficulties override it. */
+/** Default travel speed, px/s at hit-line scale; difficulties override it. */
 export const SCROLL_SPEED = 600;
-export const NOTE_WIDTH = LANE_WIDTH - 24;
+
+const TRACK_CENTER_X = VIRTUAL_WIDTH / 2;
+
+function trackWidthAt(y: number): number {
+  const t = Math.max(0, Math.min(1, y / VIRTUAL_HEIGHT));
+  return TRACK_TOP_WIDTH + (TRACK_BOTTOM_WIDTH - TRACK_TOP_WIDTH) * t;
+}
+
+/** Track's left edge at height y; hud.ts centers readouts in the gutter. */
+export function trackLeftAt(y: number): number {
+  return TRACK_CENTER_X - trackWidthAt(y) / 2;
+}
+
+/** x of the boundary between lane `edge - 1` and lane `edge` at height y. */
+function laneEdgeXAt(edge: number, y: number): number {
+  return trackLeftAt(y) + (edge / 4) * trackWidthAt(y);
+}
+
+function laneCenterXAt(lane: number, y: number): number {
+  return trackLeftAt(y) + ((lane + 0.5) / 4) * trackWidthAt(y);
+}
+
+/**
+ * Vertical "distance fog": transparent at the vanishing end, fully
+ * opaque from just below the middle of the screen on down.
+ */
+function fadeUp(r: number, g: number, b: number, alpha: number): FillGradient {
+  return new FillGradient({
+    start: { x: 0, y: 0 },
+    end: { x: 0, y: 1 },
+    colorStops: [
+      { offset: 0, color: `rgba(${r}, ${g}, ${b}, 0)` },
+      { offset: 0.45, color: `rgba(${r}, ${g}, ${b}, ${alpha})` },
+      { offset: 1, color: `rgba(${r}, ${g}, ${b}, ${alpha})` },
+    ],
+  });
+}
+
+/** Perspective size factor: 1 at the hit line, smaller upfield. */
+function perspectiveAt(y: number): number {
+  return trackWidthAt(y) / trackWidthAt(HIT_Y);
+}
+
+// Note geometry is authored at hit-line scale; perspectiveAt() shrinks
+// sprites upfield.
+export const NOTE_WIDTH = Math.round(trackWidthAt(HIT_Y) / 4) - 24;
 export const NOTE_HEIGHT = 30;
+
+// A note that passes the beat line unhit dissolves over this many px —
+// sized so it reaches zero right as the miss sweep (±135ms → 81px at
+// SCROLL_SPEED) releases the sprite, instead of popping out solid.
+const NOTE_FADE_PX = 90;
 
 const RECEPTOR_IDLE_ALPHA = 0.55;
 
@@ -37,26 +88,41 @@ const LANE_COLORS = [
 // One shared GraphicsContext per lane: four geometries on the GPU total,
 // cheap instances in the pool. acquire() swaps a sprite's context to match
 // its note's lane, so the pool stays lane-agnostic.
-const NOTE_CONTEXTS = LANE_COLORS.map(({ note }) =>
+//
+// Neon look, no filters: two oversized soft halo fills behind a bright
+// core (the lane's light variant) with a white rim — baked geometry, so
+// it batches like any sprite.
+const NOTE_CONTEXTS = LANE_COLORS.map(({ note, label }) =>
   new GraphicsContext()
+    .roundRect(
+      -NOTE_WIDTH / 2 - 10,
+      -NOTE_HEIGHT / 2 - 10,
+      NOTE_WIDTH + 20,
+      NOTE_HEIGHT + 20,
+      16,
+    )
+    .fill({ color: note, alpha: 0.2 })
+    .roundRect(
+      -NOTE_WIDTH / 2 - 4,
+      -NOTE_HEIGHT / 2 - 4,
+      NOTE_WIDTH + 8,
+      NOTE_HEIGHT + 8,
+      12,
+    )
+    .fill({ color: note, alpha: 0.45 })
     .roundRect(-NOTE_WIDTH / 2, -NOTE_HEIGHT / 2, NOTE_WIDTH, NOTE_HEIGHT, 10)
-    .fill(note)
-    .stroke({ width: 3, color: 0xffffff, alpha: 0.35 }),
+    .fill(label)
+    .stroke({ width: 2, color: 0xffffff, alpha: 0.9 }),
 );
 
 // Hold notes — a head (the same sprite a tap gets) trailing a bar the player
-// has to keep the key down through. The bar is drawn one pixel tall spanning
-// y ∈ [-1, 0] and stretched with scale.y, so a hold of any length costs one
-// scale write per frame instead of a re-tessellated Graphics. No stroke: a
-// non-uniform scale would smear it.
+// has to keep the key down through. On the trapezoid the bar is a tapered
+// quad following the lane's slant, re-tessellated per frame by layoutHold()
+// on a body Graphics each hold owns; the cap and head are shared-context
+// sprites scaled by perspective at their own heights. HOLD_WIDTH is
+// authored at hit-line scale like the notes.
 const HOLD_WIDTH = NOTE_WIDTH * 0.66;
 const HOLD_CAP_HEIGHT = 14;
-const HOLD_BODY_CONTEXTS = LANE_COLORS.map(({ note }) =>
-  new GraphicsContext().rect(-HOLD_WIDTH / 2, -1, HOLD_WIDTH, 1).fill({
-    color: note,
-    alpha: 0.5,
-  }),
-);
 const HOLD_CAP_CONTEXTS = LANE_COLORS.map(({ note }) =>
   new GraphicsContext()
     .roundRect(
@@ -102,16 +168,13 @@ interface Burst {
   intensity: number;
 }
 
-// Hit glow — a purple gradient sheet rising from the beat line on every
-// keyed note, strongest at the line and transparent at its top edge.
-// Capped at half the screen height by design.
+// Hit glow — per-lane purple light columns rising from the beat line:
+// keying a note switches on that lane's light, strongest at the line
+// and transparent at its top edge, then it fades back out. Capped at
+// half the screen height by design.
 const GLOW_HEIGHT = VIRTUAL_HEIGHT * 0.5;
 const GLOW_DURATION_MS = 420;
 const GLOW_PEAK_ALPHA = 0.9;
-
-function laneCenterX(lane: number): number {
-  return TRACK_LEFT + (lane + 0.5) * LANE_WIDTH;
-}
 
 /**
  * Renders the 4-lane track: lane strips, hit line, receptors, and pooled
@@ -131,9 +194,9 @@ export class Track {
   private readonly bursts: Burst[] = [];
   private readonly active = new Map<JudgedNote, Graphics>();
   private readonly activeHolds = new Map<JudgedNote, HoldSprite>();
-  private readonly glow: Graphics;
-  /** 0..1; jumps on a hit, decays linearly, drives the glow alpha. */
-  private glowStrength = 0;
+  private readonly glows: Graphics[] = [];
+  /** Per lane, 0..1; jumps on a hit, decays linearly, drives glow alpha. */
+  private readonly glowStrengths = [0, 0, 0, 0];
   /** Index into the (sorted) note list of the next note to spawn. */
   private spawnCursor = 0;
 
@@ -141,15 +204,27 @@ export class Track {
   constructor(private readonly scrollSpeed: number = SCROLL_SPEED) {
     const g = new Graphics();
     for (let lane = 0; lane < 4; lane++) {
-      const x = TRACK_LEFT + lane * LANE_WIDTH;
-      g.rect(x, 0, LANE_WIDTH, VIRTUAL_HEIGHT).fill({
-        color: lane % 2 === 0 ? 0x181226 : 0x1d1630,
-        alpha: 0.6,
-      });
+      // rgba of the two alternating strip colors 0x181226 / 0x1d1630,
+      // fading into the dark at the vanishing end.
+      const strip =
+        lane % 2 === 0 ? fadeUp(24, 18, 38, 0.6) : fadeUp(29, 22, 48, 0.6);
+      g.poly([
+        { x: laneEdgeXAt(lane, 0), y: 0 },
+        { x: laneEdgeXAt(lane + 1, 0), y: 0 },
+        { x: laneEdgeXAt(lane + 1, VIRTUAL_HEIGHT), y: VIRTUAL_HEIGHT },
+        { x: laneEdgeXAt(lane, VIRTUAL_HEIGHT), y: VIRTUAL_HEIGHT },
+      ]).fill(strip);
     }
-    g.rect(TRACK_LEFT - 2, 0, 2, VIRTUAL_HEIGHT).fill(0x3a2f5c);
-    g.rect(TRACK_LEFT + TRACK_WIDTH, 0, 2, VIRTUAL_HEIGHT).fill(0x3a2f5c);
-    g.rect(TRACK_LEFT, HIT_Y, TRACK_WIDTH, 4).fill(0xbfb3e0);
+    // Outer edges + the three lane dividers, fading with the strips
+    // (rgba of 0x3a2f5c).
+    for (let edge = 0; edge <= 4; edge++) {
+      g.moveTo(laneEdgeXAt(edge, 0), 0).lineTo(
+        laneEdgeXAt(edge, VIRTUAL_HEIGHT),
+        VIRTUAL_HEIGHT,
+      );
+    }
+    g.stroke({ width: 2, fill: fadeUp(58, 47, 92, 1) });
+    g.rect(trackLeftAt(HIT_Y), HIT_Y, trackWidthAt(HIT_Y), 4).fill(0xbfb3e0);
 
     // Amethyst, fading to nothing at the top; alpha is animated per hit.
     const glowGradient = new FillGradient({
@@ -160,24 +235,35 @@ export class Track {
         { offset: 1, color: "rgba(150, 120, 200, 0)" },
       ],
     });
-    this.glow = new Graphics()
-      .rect(TRACK_LEFT, HIT_Y - GLOW_HEIGHT, TRACK_WIDTH, GLOW_HEIGHT)
-      .fill(glowGradient);
-    this.glow.blendMode = "add";
-    this.glow.alpha = 0;
+    // One light column per lane, each following its lane's slanted edges
+    // up from the hit line.
+    const glowTop = HIT_Y - GLOW_HEIGHT;
+    for (let lane = 0; lane < 4; lane++) {
+      const glow = new Graphics()
+        .poly([
+          { x: laneEdgeXAt(lane, glowTop), y: glowTop },
+          { x: laneEdgeXAt(lane + 1, glowTop), y: glowTop },
+          { x: laneEdgeXAt(lane + 1, HIT_Y), y: HIT_Y },
+          { x: laneEdgeXAt(lane, HIT_Y), y: HIT_Y },
+        ])
+        .fill(glowGradient);
+      glow.blendMode = "add";
+      glow.alpha = 0;
+      this.glows.push(glow);
+    }
 
-    // Glow sits behind notes so rising light never obscures gameplay; hold
+    // Glows sit behind notes so rising light never obscures gameplay; hold
     // bars sit behind taps so a chord over a sustain still reads.
     this.view.addChild(
       g,
-      this.glow,
+      ...this.glows,
       this.holdsLayer,
       this.notesLayer,
       this.burstLayer,
     );
 
     for (let lane = 0; lane < 4; lane++) {
-      const cx = laneCenterX(lane);
+      const cx = laneCenterXAt(lane, HIT_Y + 50);
       const box = new Graphics()
         .roundRect(cx - 26, HIT_Y + 24, 52, 52, 8)
         .stroke({ width: 3, color: LANE_COLORS[lane].note });
@@ -213,14 +299,14 @@ export class Track {
       this.burstLayer.addChild(sprite);
     }
     sprite.tint = LANE_COLORS[lane].label;
-    sprite.position.set(laneCenterX(lane), HIT_Y);
+    sprite.position.set(laneCenterXAt(lane, HIT_Y), HIT_Y);
     sprite.scale.set(1);
     sprite.alpha = intensity;
     sprite.visible = true;
     this.bursts.push({ sprite, ageMs: 0, intensity });
 
-    this.glowStrength = Math.max(this.glowStrength, intensity);
-    this.glow.alpha = GLOW_PEAK_ALPHA * this.glowStrength ** 2;
+    this.glowStrengths[lane] = Math.max(this.glowStrengths[lane], intensity);
+    this.glows[lane].alpha = GLOW_PEAK_ALPHA * this.glowStrengths[lane] ** 2;
   }
 
   update(ticker: Ticker): void {
@@ -231,13 +317,14 @@ export class Track {
       );
     }
 
-    if (this.glowStrength > 0) {
-      this.glowStrength = Math.max(
+    for (let lane = 0; lane < 4; lane++) {
+      if (this.glowStrengths[lane] <= 0) continue;
+      this.glowStrengths[lane] = Math.max(
         0,
-        this.glowStrength - ticker.deltaMS / GLOW_DURATION_MS,
+        this.glowStrengths[lane] - ticker.deltaMS / GLOW_DURATION_MS,
       );
       // Squared: bright arrival, gentle tail.
-      this.glow.alpha = GLOW_PEAK_ALPHA * this.glowStrength ** 2;
+      this.glows[lane].alpha = GLOW_PEAK_ALPHA * this.glowStrengths[lane] ** 2;
     }
 
     for (let i = this.bursts.length - 1; i >= 0; i--) {
@@ -281,7 +368,13 @@ export class Track {
         this.release(note);
         continue;
       }
-      sprite.y = HIT_Y - (note.t - songTime) * this.scrollSpeed;
+      // Perspective: x and size follow the lane as it widens downfield.
+      const y = HIT_Y - (note.t - songTime) * this.scrollSpeed;
+      sprite.y = y;
+      sprite.x = laneCenterXAt(note.lane, y);
+      sprite.scale.set(perspectiveAt(y));
+      // Above the line this clamps to 1; below it, dissolve.
+      sprite.alpha = Math.min(1, Math.max(0, 1 - (y - HIT_Y) / NOTE_FADE_PX));
     }
 
     for (const [note, hold] of this.activeHolds) {
@@ -295,15 +388,50 @@ export class Track {
       const headY = HIT_Y - (note.t - songTime) * this.scrollSpeed;
       const tailY = HIT_Y - (note.t + note.d - songTime) * this.scrollSpeed;
       const bottom = note.holding ? HIT_Y : headY;
-      const length = Math.max(0, bottom - tailY);
-      hold.view.y = bottom;
-      hold.body.scale.y = length;
-      hold.cap.y = -length;
+      this.layoutHold(note.lane, hold, bottom, tailY);
       hold.head.visible = note.judgement === null;
-      hold.view.alpha = note.holding ? 1 : HOLD_IDLE_ALPHA;
+      // Un-hit holds dissolve past the line just like taps.
+      const fade = Math.min(
+        1,
+        Math.max(0, 1 - (bottom - HIT_Y) / NOTE_FADE_PX),
+      );
+      hold.view.alpha = (note.holding ? 1 : HOLD_IDLE_ALPHA) * fade;
       // Keep the receptor lit for the whole sustain, not just its head.
       if (note.holding) this.flash(note.lane);
     }
+  }
+
+  /**
+   * Lay out a hold on the trapezoid. A scale-stretched bar can't follow
+   * the slanted lane, so the body is re-tessellated as a tapered quad
+   * between the head's and tail's local lane widths; cap and head take
+   * the perspective scale at their own heights. Active holds are few,
+   * so the per-frame poly rebuild stays cheap.
+   */
+  private layoutHold(
+    lane: number,
+    hold: HoldSprite,
+    bottom: number,
+    tailY: number,
+  ): void {
+    const top = Math.min(bottom, tailY);
+    const bw = (HOLD_WIDTH / 2) * perspectiveAt(bottom);
+    const tw = (HOLD_WIDTH / 2) * perspectiveAt(top);
+    const bx = laneCenterXAt(lane, bottom);
+    const tx = laneCenterXAt(lane, top);
+    hold.body
+      .clear()
+      .poly([
+        { x: bx - bw, y: bottom },
+        { x: bx + bw, y: bottom },
+        { x: tx + tw, y: top },
+        { x: tx - tw, y: top },
+      ])
+      .fill({ color: LANE_COLORS[lane].note, alpha: 0.5 });
+    hold.cap.position.set(tx, top);
+    hold.cap.scale.set(perspectiveAt(top));
+    hold.head.position.set(bx, bottom);
+    hold.head.scale.set(perspectiveAt(bottom));
   }
 
   private acquire(note: JudgedNote): void {
@@ -314,8 +442,9 @@ export class Track {
     }
     sprite.context = NOTE_CONTEXTS[note.lane];
     sprite.visible = true;
-    sprite.x = laneCenterX(note.lane);
+    sprite.x = laneCenterXAt(note.lane, -NOTE_HEIGHT);
     sprite.y = -NOTE_HEIGHT;
+    sprite.scale.set(perspectiveAt(-NOTE_HEIGHT));
     this.active.set(note, sprite);
   }
 
@@ -331,21 +460,22 @@ export class Track {
     let hold = this.holdPool.pop();
     if (!hold) {
       const view = new Container();
-      const body = new Graphics(HOLD_BODY_CONTEXTS[note.lane]);
+      // The body owns its Graphics: layoutHold() clear()s and redraws it
+      // every frame, which must never mutate a shared context.
+      const body = new Graphics();
       const cap = new Graphics(HOLD_CAP_CONTEXTS[note.lane]);
       const head = new Graphics(NOTE_CONTEXTS[note.lane]);
       view.addChild(body, cap, head);
       this.holdsLayer.addChild(view);
       hold = { view, head, body, cap };
     }
-    hold.body.context = HOLD_BODY_CONTEXTS[note.lane];
     hold.cap.context = HOLD_CAP_CONTEXTS[note.lane];
     hold.head.context = NOTE_CONTEXTS[note.lane];
     hold.head.visible = true;
     hold.view.alpha = HOLD_IDLE_ALPHA;
     hold.view.visible = true;
-    hold.view.x = laneCenterX(note.lane);
-    hold.view.y = -NOTE_HEIGHT;
+    // Children are laid out in absolute coordinates by layoutHold().
+    hold.view.position.set(0, 0);
     this.activeHolds.set(note, hold);
   }
 
