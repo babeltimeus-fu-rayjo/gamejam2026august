@@ -19,6 +19,8 @@ export const REACTIONS: readonly Reaction[] = [
 
 export interface CharacterDef {
   id: string;
+  /** Display name (lobby avatar select). */
+  name: string;
   /** Pose texture URL per reaction. */
   poses: Record<Reaction, string>;
   /** Native pose image size; placement/scale math. */
@@ -29,6 +31,7 @@ const TEAL_DIR = `${import.meta.env.BASE_URL}assets/avatars/teal/`;
 
 export const TEAL: CharacterDef = {
   id: "teal",
+  name: "Teal",
   poses: {
     idle: `${TEAL_DIR}idle.png`,
     perfect: `${TEAL_DIR}perfect.png`,
@@ -40,3 +43,24 @@ export const TEAL: CharacterDef = {
   },
   sourceSize: { w: 864, h: 1152 },
 };
+
+const KOUEN_DIR = `${import.meta.env.BASE_URL}assets/avatars/kouen/`;
+
+export const KOUEN: CharacterDef = {
+  id: "kouen",
+  name: "Kouen",
+  poses: {
+    idle: `${KOUEN_DIR}idle.png`,
+    perfect: `${KOUEN_DIR}perfect.png`,
+    great: `${KOUEN_DIR}great.png`,
+    good: `${KOUEN_DIR}good.png`,
+    // No dedicated miss pose yet — the shock frame stands in until one lands.
+    miss: `${KOUEN_DIR}combobreak.png`,
+    comboBreak: `${KOUEN_DIR}combobreak.png`,
+    hype: `${KOUEN_DIR}hype.png`,
+  },
+  sourceSize: { w: 864, h: 1152 },
+};
+
+/** Selectable roster, in lobby cycle order. */
+export const CHARACTERS: readonly CharacterDef[] = [TEAL, KOUEN];

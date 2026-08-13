@@ -1,4 +1,5 @@
 import { Container, Graphics, Text, Ticker } from "pixi.js";
+import { CHARACTERS, type CharacterDef } from "../art/characters";
 import {
   SONG_DIR,
   VIRTUAL_HEIGHT,
@@ -20,7 +21,14 @@ import {
 } from "../net/protocol";
 import type { Scene } from "./scenes";
 
-const ROW_KEYS = ["MODE", "TRACK", "ROOM", "PLAYERS", "START"] as const;
+const ROW_KEYS = [
+  "MODE",
+  "TRACK",
+  "AVATAR",
+  "ROOM",
+  "PLAYERS",
+  "START",
+] as const;
 type RowKey = (typeof ROW_KEYS)[number];
 
 const PANEL_WIDTH = 760;
@@ -58,11 +66,18 @@ export class LobbyScene implements Scene {
   private startingInMs: number | null = null;
   private started = false;
   private elapsed = 0;
+  private characterIndex: number;
 
   constructor(
     private readonly gameMode: GameMode,
+    character: CharacterDef,
+    private readonly onCharacter: (character: CharacterDef) => void,
     private readonly onStart: () => void,
   ) {
+    this.characterIndex = Math.max(
+      0,
+      CHARACTERS.findIndex((c) => c.id === character.id),
+    );
     const heading = new Text({
       text: "LOBBY",
       style: {
@@ -268,11 +283,28 @@ export class LobbyScene implements Scene {
     "",
   ];
 
+  private cycleCharacter(step: number): void {
+    const n = CHARACTERS.length;
+    this.characterIndex = (this.characterIndex + step + n) % n;
+    this.onCharacter(CHARACTERS[this.characterIndex]);
+    this.render();
+  }
+
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (e.repeat) return;
     if (this.startTimer !== null) return; // start already committed
     if (this.mode === "joining") {
       this.handleCodeEntry(e);
+      return;
+    }
+    // Avatar pick is local-only, so it's allowed even inside a room.
+    // "Left"/"Right" are legacy key names (pre-standard browsers/webviews).
+    if (e.key === "ArrowLeft" || e.key === "Left") {
+      this.cycleCharacter(-1);
+      return;
+    }
+    if (e.key === "ArrowRight" || e.key === "Right") {
+      this.cycleCharacter(1);
       return;
     }
     const key = e.key.toLowerCase();
@@ -359,9 +391,14 @@ export class LobbyScene implements Scene {
     return this.gameMode === "battle" ? "press Enter" : "press any key";
   }
 
+  private avatarValue(): string {
+    return `◄  ${CHARACTERS[this.characterIndex].name}  ►   (←/→ to change)`;
+  }
+
   private render(): void {
     this.setValue("MODE", this.modeValue());
     this.setValue("TRACK", "Demo Track — chart select lands in M3");
+    this.setValue("AVATAR", this.avatarValue());
     this.setValue("ROOM", this.roomValue());
     this.setValue("PLAYERS", this.playersValue());
     this.setValue("START", this.startValue());

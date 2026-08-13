@@ -1,6 +1,6 @@
 import { Application, Container, Graphics } from "pixi.js";
 import { Avatar } from "./art/avatar";
-import { TEAL } from "./art/characters";
+import { CHARACTERS, TEAL, type CharacterDef } from "./art/characters";
 import {
   BACKDROP_COLOR,
   LETTERBOX_COLOR,
@@ -27,7 +27,7 @@ import type { PlayResults } from "./game/score";
 
   // Warm the pose textures while the player is on the title screen; the
   // Assets cache persists across scene switches, so this happens once.
-  void Avatar.preload(TEAL);
+  for (const c of CHARACTERS) void Avatar.preload(c);
 
   // Everything renders inside `root`, which is designed at 1280x720 virtual
   // coordinates and uniformly scaled to fit the window (letterboxed).
@@ -67,7 +67,12 @@ import type { PlayResults } from "./game/score";
   // Picked on the title screen and remembered so results can return to the
   // lobby in the same mode.
   let mode: GameMode = "single";
-  const toLobby = (): void => scenes.switchTo(new LobbyScene(mode, toGameplay));
+  // Avatar picked in the lobby (←/→) and remembered across replays.
+  let character: CharacterDef = TEAL;
+  const toLobby = (): void =>
+    scenes.switchTo(
+      new LobbyScene(mode, character, (c) => (character = c), toGameplay),
+    );
   const toTitle = (): void =>
     scenes.switchTo(
       new TitleScene((picked) => {
@@ -76,7 +81,7 @@ import type { PlayResults } from "./game/score";
       }),
     );
   const toGameplay = (): void =>
-    scenes.switchTo(new GameplayScene(toResults, toLobby));
+    scenes.switchTo(new GameplayScene(toResults, toLobby, character));
   const toResults = (results: PlayResults): void =>
     scenes.switchTo(new ResultsScene(results, toLobby));
 

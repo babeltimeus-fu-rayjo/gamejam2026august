@@ -1,6 +1,6 @@
 import { Container, Graphics, Text, Ticker } from "pixi.js";
 import { Avatar } from "../art/avatar";
-import { TEAL } from "../art/characters";
+import type { CharacterDef } from "../art/characters";
 import { VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from "../config";
 import { parseChart, type Chart } from "../core/beatmap";
 import { AudioClock } from "../core/clock";
@@ -41,11 +41,7 @@ export class GameplayScene implements Scene {
   private readonly hud = new Hud(this.bus);
   // Player sits right of the track; a future multiplayer opponent takes
   // side: "left" with its own bus (see PLAN.md M4/M6).
-  private readonly avatar = new Avatar({
-    side: "right",
-    character: TEAL,
-    bus: this.bus,
-  });
+  private readonly avatar: Avatar;
   private readonly input = new LaneInput((lane) => this.onLane(lane));
   private readonly status: Text;
 
@@ -63,7 +59,13 @@ export class GameplayScene implements Scene {
   constructor(
     private readonly onFinish: (results: PlayResults) => void,
     private readonly onQuit: () => void,
+    character: CharacterDef,
   ) {
+    this.avatar = new Avatar({
+      side: "right",
+      character,
+      bus: this.bus,
+    });
     // Placeholder art layer: fills the screen BEHIND the semi-transparent
     // track (real reactive stage lands in M4).
     const art = new Graphics()
