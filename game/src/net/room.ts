@@ -13,7 +13,9 @@ import { Emitter } from "../core/events";
 import {
   ACTIONS,
   PROTOCOL_VERSION,
+  type ArmedMsg,
   type FinishMsg,
+  type GoMsg,
   type HelloMsg,
   type HitMsg,
   type ReadyMsg,
@@ -27,10 +29,21 @@ const APP_ID = "babeltime-gamejam2026-rhythm";
 /** How long peers get to appear before we call a room empty, ms. */
 const LONELY_AFTER_MS = 8000;
 
+/**
+ * After this, a still-empty room is worth explaining rather than just
+ * reporting. We can't tell "nobody joined" from "the peer connected to the
+ * relay but the direct connection never formed" — the ~10–15% of NAT
+ * combinations that need a TURN relay (PLAN.md §8, out of jam scope) look
+ * identical from here — so the message has to cover both.
+ */
+const UNREACHABLE_AFTER_MS = 25000;
+
 export interface RemotePlayer {
   id: string;
   name: string;
   ready: boolean;
+  /** Audio decoded and context unlocked — see ArmedMsg. */
+  armed: boolean;
   /** null until their hello lands. */
   chartHash: string | null;
   /** Their chosen difficulty; null until their hello lands. May differ. */
@@ -47,6 +60,8 @@ export type NetEvents = {
   status: string;
   /** Host said go; schedule the scene switch after `inMs`. */
   start: StartMsg;
+  /** Host said go for *audio*; hand `inMs` to AudioClock.start(). */
+  go: GoMsg;
   hit: { peerId: string; msg: HitMsg };
   state: { peerId: string; msg: StateMsg };
   finish: { peerId: string; msg: FinishMsg };
@@ -75,10 +90,12 @@ export class NetRoom {
   private readonly sendHello: (msg: HelloMsg, target?: string) => void;
   private readonly sendReady: (msg: ReadyMsg) => void;
   private readonly sendStart: (msg: StartMsg) => void;
+  private readonly sendArmed: (msg: ArmedMsg) => void;
+  private readonly sendGo: (msg: GoMsg) => void;
   private readonly sendHitMsg: (msg: HitMsg) => void;
   private readonly sendStateMsg: (msg: StateMsg) => void;
   private readonly sendFinishMsg: (msg: FinishMsg) => void;
-  private lonelyTimer: number | null = null;
+  private readonly timers: number[] = [];
 
   private localReady = false;
   private left = false;
@@ -112,6 +129,18 @@ export class NetRoom {
     });
     this.sendStart = (msg) => void start.send(msg);
 
+    const armed = this.room.makeAction<ArmedMsg>(ACTIONS.armed, {
+      onMessage: (msg, { peerId }) => {
+        this.patch(peerId, { armed: msg.armed });
+      },
+    });
+    this.sendArmed = (msg) => void armed.send(msg);
+
+    const go = this.room.makeAction<GoMsg>(ACTIONS.go, {
+      onMessage: (msg) => this.bus.emit("go", msg),
+    });
+    this.sendGo = (msg) => void go.send(msg);
+
     const hit = this.room.makeAction<HitMsg>(ACTIONS.hit, {
       onMessage: (msg, { peerId }) => {
         this.patch(peerId, { combo: msg.combo, score: msg.score });
@@ -141,6 +170,7 @@ export class NetRoom {
         id: peerId,
         name: peerId.slice(0, 4),
         ready: false,
+        armed: false,
         chartHash: null,
         difficulty: null,
         combo: 0,
@@ -160,11 +190,21 @@ export class NetRoom {
     };
 
     this.bus.emit("status", "waiting for a peer…");
-    this.lonelyTimer = window.setTimeout(() => {
-      if (this.players.size === 0 && !this.left) {
-        this.bus.emit("status", "no one here yet — share the code");
-      }
-    }, LONELY_AFTER_MS);
+    this.timers.push(
+      window.setTimeout(() => {
+        if (this.players.size === 0 && !this.left) {
+          this.bus.emit("status", "no one here yet — share the code");
+        }
+      }, LONELY_AFTER_MS),
+      window.setTimeout(() => {
+        if (this.players.size === 0 && !this.left) {
+          this.bus.emit(
+            "status",
+            "still alone — check the code or try one network",
+          );
+        }
+      }, UNREACHABLE_AFTER_MS),
+    );
   }
 
   private helloMsg(): HelloMsg {
@@ -245,6 +285,45 @@ export class NetRoom {
     this.emitPeers();
   }
 
+  /**
+   * Host election without a handshake: lowest peer id wins. Trystero ids are
+   * random per session, so this is stable for the room's lifetime and both
+   * sides compute the same answer with no extra round trip.
+   */
+  get isHost(): boolean {
+    return this.peers.every((p) => this.selfId < p.id);
+  }
+
+  /** Everyone's audio is decoded and unlocked. */
+  get allArmed(): boolean {
+    const peers = this.peers;
+    return peers.length > 0 && peers.every((p) => p.armed);
+  }
+
+  setArmed(armed: boolean): void {
+    this.sendArmed({ armed });
+  }
+
+  /** Announce the audio start; the caller schedules its own to match. */
+  announceGo(inMs: number): void {
+    this.sendGo({ inMs });
+  }
+
+  /**
+   * Round-trip time to the opponent, ms. Returns null if the ping fails or
+   * there is no peer — callers fall back to assuming zero latency, which
+   * costs alignment accuracy but never blocks the start.
+   */
+  async pingPeer(): Promise<number | null> {
+    const peer = this.peers[0];
+    if (!peer) return null;
+    try {
+      return await this.room.ping(peer.id);
+    } catch {
+      return null;
+    }
+  }
+
   /** Tell peers to begin; the caller schedules its own start identically. */
   announceStart(inMs: number): StartMsg {
     const msg: StartMsg = {
@@ -271,7 +350,8 @@ export class NetRoom {
   async leave(): Promise<void> {
     if (this.left) return;
     this.left = true;
-    if (this.lonelyTimer !== null) window.clearTimeout(this.lonelyTimer);
+    for (const timer of this.timers) window.clearTimeout(timer);
+    this.timers.length = 0;
     this.players.clear();
     await this.room.leave();
   }
@@ -286,11 +366,26 @@ export function activeRoom(): NetRoom | null {
   return active;
 }
 
+// Closing the tab must announce the departure, otherwise the opponent stares
+// at a live-looking ghost until the relay times the peer out. pagehide fires
+// on close, navigation, and mobile backgrounding, where beforeunload doesn't.
+// leave() is best-effort here: the browser won't wait for it.
+let unloadHookInstalled = false;
+
+function installUnloadHook(): void {
+  if (unloadHookInstalled) return;
+  unloadHookInstalled = true;
+  window.addEventListener("pagehide", () => {
+    void active?.leave();
+  });
+}
+
 export async function joinNetRoom(
   code: string,
   identity: RoomIdentity,
 ): Promise<NetRoom> {
   await leaveNetRoom();
+  installUnloadHook();
   active = new NetRoom(code, identity);
   return active;
 }

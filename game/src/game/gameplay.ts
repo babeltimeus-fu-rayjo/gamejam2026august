@@ -7,6 +7,9 @@ import { applyDifficulty, type Difficulty } from "../core/difficulty";
 import { AudioClock } from "../core/clock";
 import { Emitter } from "../core/events";
 import { LaneInput } from "../core/input";
+import { GameplayRelay } from "../net/relay";
+import { activeRoom } from "../net/room";
+import { GhostHud } from "../ui/ghost-hud";
 import { Hud } from "../ui/hud";
 import { Judge, noteWeight, type JudgedNote, type Resolution } from "./judge";
 import { ScoreState, type GameEvents, type PlayResults } from "./score";
@@ -15,6 +18,11 @@ import type { Scene } from "./scenes";
 
 /** Grace period after the last judged note before results. */
 const OUTRO_S = 1.5;
+
+/** Lead-in the host schedules for a networked start. */
+const GO_LEAD_MS = 2000;
+/** Past this, a peer that never armed is treated as absent. */
+const NET_START_TIMEOUT_MS = 15000;
 
 // Top-left corner buttons (pause / back to lobby).
 const BUTTON_HEIGHT = 40;
@@ -44,6 +52,19 @@ export class GameplayScene implements Scene {
     onPress: (lane) => this.onPress(lane),
     onRelease: (lane) => this.onRelease(lane),
   });
+  // Null in single play: the whole net layer stays dormant unless the lobby
+  // opened a room.
+  private readonly room = activeRoom();
+  private readonly ghost = new GhostHud(this.room);
+  private readonly relay = this.room
+    ? new GameplayRelay(this.room, this.bus, () => this.clock.songTime())
+    : null;
+  /** Unsubscribe for the host's `go`; see beginPlayback. */
+  private readonly offGo =
+    this.room?.bus.on("go", ({ inMs }) => {
+      // Straight to the hardware audio clock — no frame-timer round trip.
+      this.clock.start(inMs / 1000);
+    }) ?? null;
   private readonly status: Text;
 
   private readonly pauseLabel: Text;
@@ -53,6 +74,9 @@ export class GameplayScene implements Scene {
   private notes: JudgedNote[] = [];
   private judge: Judge | null = null;
   private score: ScoreState | null = null;
+  private armedSent = false;
+  private goSent = false;
+  private waitingForPeerMs = 0;
   private lastNoteT = 0;
   private finished = false;
   private paused = false;
@@ -134,6 +158,7 @@ export class GameplayScene implements Scene {
       this.avatar.view,
       this.track.view,
       this.hud.view,
+      this.ghost.view,
       this.status,
       this.pauseOverlay,
       pauseButton.view,
@@ -194,6 +219,11 @@ export class GameplayScene implements Scene {
   private quit(): void {
     if (this.finished) return;
     this.finished = true;
+    // Send what we had: the opponent's ghost otherwise sits frozen at our
+    // last hit, looking like a live player who stopped scoring.
+    if (this.score) {
+      this.relay?.finish(this.score.results(), this.difficulty.id);
+    }
     this.onQuit();
   }
 
@@ -268,10 +298,61 @@ export class GameplayScene implements Scene {
     void this.clock.resume();
   };
 
+  /**
+   * Start playback, aligned with the opponent when there is one.
+   *
+   * Solo starts immediately. In a room, both sides decode audio and unlock
+   * their AudioContext at different moments, so scene-switch alignment isn't
+   * enough: each side announces `armed`, the host waits for everyone, then
+   * broadcasts `go`. Receivers hand `inMs` straight to AudioClock.start(),
+   * scheduling on the hardware audio clock rather than a frame timer; the
+   * host adds its own half-RTT so both songs reach t=0 together.
+   *
+   * Returns true once the clock has been started.
+   */
+  private beginPlayback(deltaMS: number): boolean {
+    const room = this.room;
+    if (!room || room.peers.length === 0) {
+      this.clock.start(2);
+      return true;
+    }
+
+    if (!this.armedSent) {
+      this.armedSent = true;
+      room.setArmed(true);
+    }
+
+    // Never let a silent peer strand the player at a black screen.
+    this.waitingForPeerMs += deltaMS;
+    if (this.waitingForPeerMs > NET_START_TIMEOUT_MS) {
+      this.setStatus("opponent never started — playing solo");
+      this.clock.start(2);
+      return true;
+    }
+
+    if (room.isHost && room.allArmed && !this.goSent) {
+      this.goSent = true;
+      void room.pingPeer().then((rtt) => {
+        room.announceGo(GO_LEAD_MS);
+        // Peers start GO_LEAD_MS after receipt, i.e. one trip later than
+        // this send; wait that out so both reach t=0 at the same instant.
+        const oneWayMs = rtt === null ? 0 : rtt / 2;
+        this.clock.start((GO_LEAD_MS + oneWayMs) / 1000);
+      });
+    }
+
+    this.setStatus(
+      room.allArmed ? "starting together…" : "waiting for opponent to load…",
+    );
+    return false;
+  }
+
   private finish(): void {
     if (this.finished) return;
     this.finished = true;
-    this.onFinish(this.score?.results() ?? new ScoreState(0).results());
+    const results = this.score?.results() ?? new ScoreState(0).results();
+    this.relay?.finish(results, this.difficulty.id);
+    this.onFinish(results);
   }
 
   enter(): void {
@@ -285,6 +366,9 @@ export class GameplayScene implements Scene {
 
   exit(): void {
     this.avatar.dispose();
+    this.ghost.dispose();
+    this.relay?.dispose();
+    this.offGo?.();
     this.input.detach();
     window.removeEventListener("keydown", this.onAnyKey);
     this.clock.destroy();
@@ -300,6 +384,7 @@ export class GameplayScene implements Scene {
 
     this.track.update(ticker);
     this.hud.update(ticker);
+    this.ghost.update(ticker);
     this.avatar.update(ticker);
 
     if (!this.chart || !this.judge || !this.score) return;
@@ -309,7 +394,7 @@ export class GameplayScene implements Scene {
       return;
     }
     if (!this.clock.started) {
-      this.clock.start(2);
+      if (!this.beginPlayback(ticker.deltaMS)) return;
       this.setStatus(
         `${this.chart.song.title} · ${this.difficulty.label} — D F J K, hold the long notes, Enter to bail`,
       );
@@ -323,6 +408,14 @@ export class GameplayScene implements Scene {
 
     this.track.sync(this.notes, t);
 
+    this.relay?.tick(ticker.deltaMS, {
+      combo: this.score.combo,
+      score: this.score.score,
+      judged: this.score.judgedCount,
+    });
+
+    // main's count: totalNotes covers holds, which contribute more than one
+    // judgement each, so notes.length would finish the song early.
     const allJudged = this.score.judgedCount === this.score.totalNotes;
     const pastEnd =
       t > this.lastNoteT + OUTRO_S || t > this.chart.song.duration + 1;

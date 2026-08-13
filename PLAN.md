@@ -175,7 +175,7 @@ Ordered so the game is **playable end-to-end as early as possible**; art and pol
 | **M3** | Real chart + holds | ~~Charting tool~~ (done: `chart-editor/`, PR #1). Author the real chart for the song in it (verify BPM/offset with its metronome); game renders hold notes as duration bars (hold *judging* can stay tap-based until M4+) | 0.5 day |
 | **M4** | Art & juice | Full-screen art layer behind the semi-transparent track (combo-reactive character/background); receptor flashes, hit popups, note skins, miss feedback; title screen | 1–1.5 days |
 | **M5** | Calibration & polish | Calibration screen (offset in localStorage), lobby track select wired to the real song list, pause/quit, volume | 0.5 day |
-| **M6** | *Stretch:* multiplayer | See §8 — invite/join from the lobby, versus with live opponent score/combo ghost | 1 day |
+| **M6** | *Stretch:* multiplayer | See §8 — invite/join from the lobby, versus with live opponent score/combo ghost. **Built:** rooms + ready, ghost HUD, aligned audio start, side-by-side results. **Untested across two networks** — two tabs on one machine only exercises host candidates, not NAT traversal | 1 day |
 
 Cut lines if time runs short, in order: M6 → extra tracks in the lobby → pause → hold notes (never planned for MVP).
 
@@ -187,15 +187,17 @@ Cut lines if time runs short, in order: M6 → extra tracks in the lobby → pau
 
 - **WebRTC `RTCDataChannel`** between browsers, direct peer-to-peer.
 - **STUN servers** (the "snap servers" in the brief) are free public infrastructure (e.g. `stun.l.google.com:19302`) that tell each peer its public address for NAT traversal — nothing for us to host.
-- **Signaling without a dedicated server** — peers still need to exchange connection offers once. Options, in order of preference:
-  1. **Trystero** (recommended): does signaling over public BitTorrent trackers / Nostr / MQTT relays. Room-code API (`joinRoom(config, "ABCD")`), zero infrastructure, MIT.
-  2. **PeerJS** + its free public broker: dead simple, but the broker is a hosted dependency.
-  3. **Manual copy-paste** of offer/answer strings (works with zero third parties; fine as a fallback demo).
-- **Known limit:** ~10–15 % of NAT combinations (symmetric NAT) need a TURN relay, which does require a server. Out of jam scope — detect connection failure and show "couldn't connect, try same network."
+- **Signaling without a dedicated server** — **shipped with Trystero** (`joinRoom(config, "ABCD")`, zero infrastructure, MIT). Note that Trystero 0.25 **defaults to Nostr relays, not the BitTorrent trackers** this plan originally assumed: room codes and presence traverse third-party public relays either way. Its API also changed — `makeAction` returns `{send, onMessage}` and `onPeerJoin` is a settable property. Fallbacks if the relays ever fail us: PeerJS + its public broker, or manual copy-paste of offer/answer strings.
+- **Known limit:** ~10–15 % of NAT combinations (symmetric NAT) need a TURN relay, which does require a server. Out of jam scope. We can't distinguish it from "nobody joined" client-side, so the lobby says so after 25 s alone and suggests trying one network.
 
-**Protocol** (`net/protocol.ts`, tiny JSON messages): `hello` (name, chart hash) → `ready` → `start` (host schedules "begin at local-audio-clock + 2 s" after a few ping samples to align countdowns) → `hit {t, lane, judgement, combo, score}` / periodic `state` → `finish {score, acc, maxCombo}`. Late/dropped messages only stale the ghost — harmless.
+**Protocol** (`net/protocol.ts`, tiny JSON messages, currently **v2**): `hello` (name, chart hash) → `ready` → `start {inMs}` (scene switch) → `armed` (audio decoded + context unlocked) → `go {inMs}` (host pings for RTT, then both hand the delay to `AudioClock.start()`) → `hit {t, lane, judgement, combo, score}` / 1 Hz `state` → `finish {score, acc, maxCombo}`. Late/dropped messages only stale the ghost — harmless.
 
-**UI:** the lobby hosts the invite/join flow (create room → share a short code; join by typing one) and per-player ready states; during play an opponent score/combo ghost pins to the HUD; final side-by-side on results. Both clients verify the same chart hash before starting.
+Two details that matter more than they look:
+
+- **`start`/`go` carry a relative delay, never an absolute timestamp.** Wall clocks between machines differ by seconds; relay latency is tens of ms. Each side schedules from its own receipt, so the error is bounded by latency, not clock skew.
+- **Aligning the scene switch is not enough.** Both sides decode audio and unlock their `AudioContext` at different moments, so the `armed` → `go` handshake exists to gate the *audio* start; without it the two songs can sit seconds apart.
+
+**UI:** the title screen's **battle** mode is the front door; the lobby hosts create/join by code (`C`/`J`) and per-player ready (`R`); during play a compact opponent ghost pins to the top-right; results split into side-by-side columns with a win/lose/tie verdict. Both clients verify the same chart hash before starting.
 
 ## 9. Risks & mitigations
 
